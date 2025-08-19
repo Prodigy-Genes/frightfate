@@ -1,0 +1,23 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.pid
+*.coverage 
+.env
+alembic.ini
+alembic/
+check_tables.py
+migrations/
+# Ignore IDE and editor files
+.idea/
+.vscode/
+*.sublime-project
+
+test_db_connection.py
+
+seed_scenarios.py
