@@ -120,11 +120,14 @@ async function loadLobby() {
 // Load scenarios for the current theme
 async function loadScenarios() {
   try {
+    console.log('Loading scenarios for theme:', gameState.currentTheme);
     const scenarios = await apiCall(`/api/game/scenarios/${gameState.currentTheme}`);
     gameState.scenarios = scenarios;
+    console.log('Loaded scenarios:', scenarios);
   } catch (error) {
-    console.error('Failed to load scenarios:', error);
-    // For now, we'll use mock scenarios since we haven't implemented the endpoint yet
+    console.error('Failed to load scenarios from API:', error);
+    // Fall back to mock scenarios
+    console.log('Using mock scenarios as fallback');
     gameState.scenarios = mockScenarios;
   }
 }
@@ -153,6 +156,8 @@ async function startGame() {
 
 // Display current scenario
 function displayCurrentScenario() {
+  console.log('Displaying scenario:', gameState.currentQuestion, 'Total scenarios:', gameState.scenarios.length);
+  
   const scenario = gameState.scenarios.find(s => s.question_number === gameState.currentQuestion);
   
   if (scenario) {
@@ -161,8 +166,13 @@ function displayCurrentScenario() {
     document.getElementById('scenarioDescription').textContent = scenario.description;
     
     // Update progress bar
-    const progress = (gameState.currentQuestion / gameState.totalQuestions) * 100;
+    const progress = (gameState.currentQuestion / gameState.scenarios.length) * 100;
     document.getElementById('progressFill').style.width = `${progress}%`;
+    
+    console.log('Scenario displayed successfully');
+  } else {
+    console.error('Scenario not found for question:', gameState.currentQuestion);
+    console.log('Available scenarios:', gameState.scenarios);
   }
 }
 
@@ -176,7 +186,7 @@ async function submitAnswer() {
   }
 
   try {
-    await apiCall('/api/game/submit-answer', {
+    const response = await apiCall('/api/game/submit-answer', {
       method: 'POST',
       body: JSON.stringify({
         session_code: gameState.sessionCode,
@@ -186,17 +196,22 @@ async function submitAnswer() {
       })
     });
     
+    console.log('Answer submitted:', response);
+    
     // Clear the answer field
     document.getElementById('playerAnswer').value = '';
     
     // Move to next question or finish game
-    if (gameState.currentQuestion < gameState.totalQuestions) {
+    if (gameState.currentQuestion < gameState.scenarios.length) {
       gameState.currentQuestion++;
+      console.log('Moving to question:', gameState.currentQuestion);
       displayCurrentScenario();
     } else {
+      console.log('Game completed, showing results');
       await showResults();
     }
   } catch (error) {
+    console.error('Failed to submit answer:', error);
     alert('Failed to submit answer. Please try again.');
   }
 }

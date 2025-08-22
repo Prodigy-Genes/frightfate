@@ -5,6 +5,8 @@ from app.models.game import GameSession, Player, Scenario, PlayerAnswer
 from pydantic import BaseModel
 import random
 import string
+from app.services.ai_service import ai_service
+
 
 router = APIRouter()
 
@@ -97,22 +99,17 @@ async def get_session(session_code: str, db: Session = Depends(get_db)):
         "players": [{"id": p.id, "name": p.name, "is_ready": p.is_ready} for p in players]
     }
 
+
 @router.get("/scenarios/{theme}")
 async def get_scenarios(theme: str, db: Session = Depends(get_db)):
-    """Get all scenarios for a specific theme"""
-    scenarios = db.query(Scenario).filter(Scenario.theme == theme).order_by(Scenario.question_number).all()
-    
-    if not scenarios:
-        raise HTTPException(status_code=404, detail=f"No scenarios found for theme: {theme}")
-    
-    return [
-        {
-            "question_number": s.question_number,
-            "title": s.title,
-            "description": s.description
-        }
-        for s in scenarios
-    ]
+    """Get scenarios for a specific theme (AI-generated)"""
+    try:
+        # Generate fresh scenarios using AI
+        scenarios = await ai_service.generate_scenarios(theme, count=10)
+        return scenarios
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate scenarios: {str(e)}")
+        
 
 @router.post("/submit-answer")
 async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_db)):
@@ -136,45 +133,76 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
         PlayerAnswer.player_id == request.player_id,
         PlayerAnswer.question_number == request.question_number
     ).first()
+
+    # AI Analysis section
+    try:
+        # Extract the string value from the session.theme Column
+        theme_value = str(getattr(session, "theme", "")) or ""
+        scenarios = await ai_service.generate_scenarios(theme_value, count=10)
+        current_scenario = next((s for s in scenarios if s["question_number"] == request.question_number), None)
+        
+        if current_scenario:
+            # Analyze the answer with AI
+            analysis = await ai_service.analyze_answer(
+                current_scenario["description"],
+                request.answer_text,
+                current_scenario.get("survival_factors", [])
+            )
+            score = analysis["survival_score"]
+        else:
+            score = 50  # Default score if scenario not found
+            
+    except Exception as e:
+        print(f"Error analyzing answer: {e}")
+        score = 50  # Default score on error
     
+    # Save or update answer with AI-generated score
     if existing_answer:
-        # Update existing answer
-        existing_answer.answer_text = request.answer_text # type: ignore
+        # Use setattr to avoid type checking issues with SQLAlchemy models
+        setattr(existing_answer, "answer_text", request.answer_text)
+        setattr(existing_answer, "score", score)
         db.commit()
-        return {"message": "Answer updated successfully"}
+        return {"message": "Answer updated successfully", "score": score}
     else:
-        # Create new answer
         answer = PlayerAnswer(
             session_id=session.id,
             player_id=request.player_id,
             question_number=request.question_number,
             answer_text=request.answer_text,
-            score=0  # We'll calculate this later
+            score=score
         )
         
         db.add(answer)
         db.commit()
-        return {"message": "Answer submitted successfully"}
-
+        return {"message": "Answer submitted successfully", "score": score}
+    
+    
 @router.get("/results/{session_code}")
 async def get_results(session_code: str, db: Session = Depends(get_db)):
-    """Get final results for a session"""
+    """Get AI-generated final results for a session"""
     session = db.query(GameSession).filter(GameSession.session_code == session_code).first()
     
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
+    # Get all players and their answers
     players = db.query(Player).filter(Player.session_id == session.id).all()
     
-    # For now, return mock results. Later we'll implement proper scoring logic
-    results = []
-    for i, player in enumerate(players):
-        results.append({
+    players_data = []
+    for player in players:
+        answers = db.query(PlayerAnswer).filter(PlayerAnswer.player_id == player.id).all()
+        total_score = sum(answer.score for answer in answers)
+        
+        players_data.append({
             "player_name": player.name,
-            "survived": i == 0,  # First player survives for demo
-            "death_order": i + 1 if i > 0 else None,
-            "fate": "🎉 SOLE SURVIVOR" if i == 0 else f"💀 Died #{i + 1}",
-            "analysis": "Your strategic thinking and careful decision-making kept you alive when others perished." if i == 0 else "Your impulsive choices led to an early demise."
+            "total_score": total_score,
+            "answer_count": len(answers),
+            "average_score": total_score / len(answers) if answers else 0
         })
     
-    return results
+    # Generate AI results
+    try:
+        results = await ai_service.generate_final_results(players_data)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate results: {str(e)}")

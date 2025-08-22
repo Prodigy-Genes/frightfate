@@ -6,9 +6,14 @@ class Settings(BaseSettings):
     secret_key: str = "your-super-secret-key-change-this-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    
+    # Updated Gemini Settings
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 @lru_cache()
 def get_settings():

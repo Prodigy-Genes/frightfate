@@ -17,7 +17,8 @@ migrations/
 .idea/
 .vscode/
 *.sublime-project
-
+test_new_gemini.py
 test_db_connection.py
 
 seed_scenarios.py
+check_scenarios.py
