@@ -397,3 +397,304 @@ body {
     width: 200px;
   }
 }
+
+/* Loading States - matches your horror theme */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  -webkit-backdrop-filter: blur();
+  backdrop-filter: blur(8px);
+}
+
+.loading-content {
+  text-align: center;
+  color: #e0e0e0;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(220, 20, 60, 0.3);
+  border-top: 3px solid #dc143c;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
+}
+
+.loading-spinner.large {
+  width: 60px;
+  height: 60px;
+  border-width: 4px;
+  margin-bottom: 20px;
+  margin-right: 0;
+}
+
+.loading-message {
+  font-size: 1.2rem;
+  margin-top: 16px;
+  color: #dc143c;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(220, 20, 60, 0.5);
+}
+
+/* Input Validation - matching your theme */
+input.error,
+textarea.error {
+  border-color: #dc143c !important;
+  box-shadow: 0 0 15px rgba(220, 20, 60, 0.6) !important;
+  background: rgba(220, 20, 60, 0.15) !important;
+}
+
+.error-message {
+  color: #dc143c;
+  font-size: 0.9rem;
+  margin-top: 8px;
+  display: none;
+  font-weight: bold;
+  text-shadow: 0 0 5px rgba(220, 20, 60, 0.5);
+}
+
+.error-message.show {
+  display: block;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Character Counter */
+.character-counter {
+  font-size: 0.85rem;
+  color: #888;
+  text-align: right;
+  margin-top: 8px;
+  font-style: italic;
+}
+
+.character-counter.warning {
+  color: #dc143c;
+  font-weight: bold;
+  text-shadow: 0 0 5px rgba(220, 20, 60, 0.5);
+}
+
+/* Notifications - horror themed */
+.notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  min-width: 320px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  color: white;
+  font-weight: bold;
+  z-index: 10000;
+  animation: slideInRight 0.4s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+  border: 2px solid;
+  -webkit-backdrop-filter: blur();
+  backdrop-filter: blur(10px);
+}
+
+.notification.success {
+  background: linear-gradient(135deg, rgba(34, 139, 34, 0.9), rgba(40, 167, 69, 0.8));
+  border-color: #228b22;
+  box-shadow: 0 10px 30px rgba(34, 139, 34, 0.4);
+}
+
+.notification.error {
+  background: linear-gradient(135deg, rgba(220, 20, 60, 0.9), rgba(139, 0, 0, 0.9));
+  border-color: #dc143c;
+  box-shadow: 0 10px 30px rgba(220, 20, 60, 0.4);
+}
+
+.notification.warning {
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.9), rgba(253, 126, 20, 0.9));
+  border-color: #ffc107;
+  color: #000;
+  box-shadow: 0 10px 30px rgba(255, 193, 7, 0.4);
+}
+
+.notification.info {
+  background: linear-gradient(135deg, rgba(23, 162, 184, 0.9), rgba(111, 66, 193, 0.9));
+  border-color: #17a2b8;
+  box-shadow: 0 10px 30px rgba(23, 162, 184, 0.4);
+}
+
+.notification-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.8rem;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 12px;
+  opacity: 0.8;
+  transition: opacity 0.3s ease;
+  line-height: 1;
+}
+
+.notification-close:hover {
+  opacity: 1;
+  text-shadow: 0 0 10px currentColor;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Enhanced Player Status - integrating with your existing styles */
+.player-status.ready {
+  color: #228b22;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(34, 139, 34, 0.6);
+}
+
+.player-status.waiting {
+  color: #ffc107;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(255, 193, 7, 0.6);
+}
+
+.no-players {
+  text-align: center;
+  padding: 40px 20px;
+  color: #888;
+  font-style: italic;
+  background: rgba(40, 40, 40, 0.3);
+  border-radius: 12px;
+  border: 2px dashed #333;
+  margin: 20px 0;
+}
+
+/* Enhanced Theme Selection */
+.theme-option.selected::after {
+  content: '✓';
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  color: #228b22;
+  font-size: 2rem;
+  font-weight: bold;
+  text-shadow: 0 0 15px rgba(34, 139, 34, 0.8);
+  z-index: 2;
+}
+
+/* Button Loading States */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+button .loading-spinner {
+  margin-right: 8px;
+}
+
+/* Enhanced Results - working with your existing card styles */
+.result-card {
+  animation: fadeInUp 0.8s ease-out forwards;
+  opacity: 0;
+  transform: translateY(30px);
+}
+
+.result-card:nth-child(1) { animation-delay: 0.2s; }
+.result-card:nth-child(2) { animation-delay: 0.4s; }
+.result-card:nth-child(3) { animation-delay: 0.6s; }
+.result-card:nth-child(4) { animation-delay: 0.8s; }
+
+.result-card.survivor {
+  border-color: #228b22;
+  background: linear-gradient(135deg, rgba(34, 139, 34, 0.3), rgba(0, 0, 0, 0.9));
+  box-shadow: 0 10px 30px rgba(34, 139, 34, 0.3);
+}
+
+.result-card.survivor .rank-number {
+  background: #228b22;
+  box-shadow: 0 0 20px rgba(34, 139, 34, 0.6);
+}
+
+.result-narrative {
+  font-size: 1rem;
+  margin: 12px 0;
+  line-height: 1.5;
+  color: #ddd;
+}
+
+.result-analysis {
+  font-size: 0.9rem;
+  opacity: 0.8;
+  font-style: italic;
+  color: #ccc;
+}
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Textarea Auto-resize */
+textarea {
+  transition: height 0.2s ease, border-color 0.3s ease;
+}
+
+/* Enhanced Input Focus - matching your theme */
+input:focus, 
+textarea:focus {
+  border-color: #dc143c !important;
+  box-shadow: 0 0 15px rgba(220, 20, 60, 0.4) !important;
+}
+
+/* Mobile Responsiveness for New Elements */
+@media (max-width: 768px) {
+  .notification {
+    right: 10px;
+    left: 10px;
+    min-width: auto;
+    font-size: 0.9rem;
+  }
+  
+  .loading-spinner.large {
+    width: 50px;
+    height: 50px;
+  }
+  
+  .character-counter {
+    text-align: center;
+    font-size: 0.8rem;
+  }
+  
+  .notification-close {
+    font-size: 1.5rem;
+  }
+}
+
+/* Accessibility and reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .notification,
+  .result-card,
+  .loading-spinner {
+    animation: none !important;
+  }
+  
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

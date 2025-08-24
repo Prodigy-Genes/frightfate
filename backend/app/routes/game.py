@@ -6,6 +6,9 @@ from pydantic import BaseModel
 import random
 import string
 from app.services.ai_service import ai_service
+import asyncio
+from asyncio import timeout
+
 
 
 router = APIRouter()
@@ -102,18 +105,34 @@ async def get_session(session_code: str, db: Session = Depends(get_db)):
 
 @router.get("/scenarios/{theme}")
 async def get_scenarios(theme: str, db: Session = Depends(get_db)):
-    """Get scenarios for a specific theme (AI-generated)"""
+    """Get 5 scenarios for a specific theme (AI-generated with timeout)"""
     try:
-        # Generate fresh scenarios using AI
-        scenarios = await ai_service.generate_scenarios(theme, count=10)
+        print(f"🎭 Generating 5 scenarios for theme: {theme}")
+        
+        # Set a 30-second timeout for AI generation
+        async with timeout(30):
+            scenarios = await ai_service.generate_scenarios(theme, count=5)
+            
+        print(f"✅ Successfully generated {len(scenarios)} scenarios")
         return scenarios
+        
+    except asyncio.TimeoutError:
+        print("⏰ AI generation timed out, using 5 fallback scenarios")
+        fallback_scenarios = ai_service._get_fallback_scenarios(theme, 5)
+        return fallback_scenarios
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate scenarios: {str(e)}")
+        print(f"❌ Error generating scenarios: {str(e)}")
+        fallback_scenarios = ai_service._get_fallback_scenarios(theme, 5)
+        return fallback_scenarios
+
         
 
 @router.post("/submit-answer")
 async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_db)):
-    """Submit a player's answer to a scenario"""
+    """Submit a player's answer to a scenario with AI analysis"""
+    print(f"🧠 Processing answer for player {request.player_id}, question {request.question_number}")
+    
     # Verify session exists
     session = db.query(GameSession).filter(GameSession.session_code == request.session_code).first()
     if not session:
@@ -134,34 +153,60 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
         PlayerAnswer.question_number == request.question_number
     ).first()
 
-    # AI Analysis section
+    # AI Analysis with timeout handling
+    score = 50  # Default score
     try:
         # Extract the string value from the session.theme Column
         theme_value = str(getattr(session, "theme", "")) or ""
-        scenarios = await ai_service.generate_scenarios(theme_value, count=10)
-        current_scenario = next((s for s in scenarios if s["question_number"] == request.question_number), None)
+        print(f"🎬 5 Loading scenarios for theme: {theme_value}")
         
-        if current_scenario:
-            # Analyze the answer with AI
-            analysis = await ai_service.analyze_answer(
-                current_scenario["description"],
-                request.answer_text,
-                current_scenario.get("survival_factors", [])
-            )
-            score = analysis["survival_score"]
-        else:
-            score = 50  # Default score if scenario not found
+        # Set timeout for AI operations
+        async with timeout(20):  # 20 second timeout
+            scenarios = await ai_service.generate_scenarios(theme_value, count=5)
+            current_scenario = next((s for s in scenarios if s["question_number"] == request.question_number), None)
             
+            if current_scenario:
+                print(f"🔍 Analyzing answer with AI...")
+                # Analyze the answer with AI
+                analysis = await ai_service.analyze_answer(
+                    current_scenario["description"],
+                    request.answer_text,
+                    current_scenario.get("survival_factors", [])
+                )
+                score = analysis["survival_score"]
+                print(f"✅ AI analysis complete: score {score}")
+            else:
+                print("⚠️ Scenario not found, using fallback analysis")
+                # Use fallback analysis
+                fallback_analysis = ai_service._fallback_analysis(
+                    request.answer_text, 
+                    ["logical_thinking", "caution"]
+                )
+                score = fallback_analysis["survival_score"]
+                
+    except asyncio.TimeoutError:
+        print("⏰ AI analysis timed out, using fallback scoring")
+        fallback_analysis = ai_service._fallback_analysis(
+            request.answer_text, 
+            ["logical_thinking", "caution"]
+        )
+        score = fallback_analysis["survival_score"]
+        
     except Exception as e:
-        print(f"Error analyzing answer: {e}")
-        score = 50  # Default score on error
+        print(f"❌ Error analyzing answer: {e}")
+        # Use sophisticated fallback scoring
+        fallback_analysis = ai_service._fallback_analysis(
+            request.answer_text, 
+            ["logical_thinking", "caution"]
+        )
+        score = fallback_analysis["survival_score"]
     
-    # Save or update answer with AI-generated score
+    # Save or update answer with generated score
     if existing_answer:
-        # Use setattr to avoid type checking issues with SQLAlchemy models
         setattr(existing_answer, "answer_text", request.answer_text)
         setattr(existing_answer, "score", score)
         db.commit()
+        print(f"📝 Answer updated for player {request.player_id}")
         return {"message": "Answer updated successfully", "score": score}
     else:
         answer = PlayerAnswer(
@@ -174,12 +219,14 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
         
         db.add(answer)
         db.commit()
+        print(f"💾 Answer saved for player {request.player_id}")
         return {"message": "Answer submitted successfully", "score": score}
-    
     
 @router.get("/results/{session_code}")
 async def get_results(session_code: str, db: Session = Depends(get_db)):
-    """Get AI-generated final results for a session"""
+    """Get AI-generated final results for a session with timeout handling"""
+    print(f"🏆 Generating results for session: {session_code}")
+    
     session = db.query(GameSession).filter(GameSession.session_code == session_code).first()
     
     if not session:
@@ -200,9 +247,21 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
             "average_score": total_score / len(answers) if answers else 0
         })
     
-    # Generate AI results
+    print(f"📊 Processing results for {len(players_data)} players")
+    
+    # Generate AI results with timeout
     try:
-        results = await ai_service.generate_final_results(players_data)
-        return results
+        async with timeout(25):  # 25 second timeout for results
+            results = await ai_service.generate_final_results(players_data)
+            print(f"✅ AI results generated successfully")
+            return results
+            
+    except asyncio.TimeoutError:
+        print("⏰ AI results generation timed out, using fallback results")
+        fallback_results = ai_service._fallback_results(players_data)
+        return fallback_results
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate results: {str(e)}")
+        print(f"❌ Error generating results: {str(e)}")
+        fallback_results = ai_service._fallback_results(players_data)
+        return fallback_results

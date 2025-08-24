@@ -10,7 +10,7 @@ let gameState = {
   playerName: '',
   currentTheme: 'haunted_house',
   currentQuestion: 0,
-  totalQuestions: 10,
+  totalQuestions: 5,
   scenarios: [],
   isGameHost: false
 };
@@ -47,6 +47,8 @@ async function apiCall(endpoint, options = {}) {
 
 // Create a new game session
 async function createGameSession() {
+  showLoadingButton('createGameBtn', 'Creating...');
+  
   try {
     const response = await apiCall('/api/game/create-session', {
       method: 'POST',
@@ -61,8 +63,13 @@ async function createGameSession() {
     if (playerName) {
       await joinGameSession(response.session_code, playerName);
     }
+    
+    hideLoadingButton('createGameBtn', 'Create New Game');
+    showNotification('✅ Game session created successfully!', 'success');
+    
   } catch (error) {
-    alert('Failed to create game session. Please try again.');
+    hideLoadingButton('createGameBtn', 'Create New Game');
+    showNotification('❌ Failed to create game session. Please try again.', 'error');
   }
 }
 
@@ -72,9 +79,11 @@ async function joinGameSession(sessionCode = null, playerName = null) {
   const name = playerName || document.getElementById('playerName').value;
   
   if (!code || !name) {
-    alert('Please enter both session code and your name.');
+    showNotification('⚠️ Please enter both session code and your name.', 'warning');
     return;
   }
+
+  showLoadingButton('joinSessionBtn', 'Joining...');
 
   try {
     const response = await apiCall(`/api/game/join-session/${code}?player_name=${encodeURIComponent(name)}`, {
@@ -86,8 +95,13 @@ async function joinGameSession(sessionCode = null, playerName = null) {
     gameState.playerName = name;
     
     await loadLobby();
+    
+    hideLoadingButton('joinSessionBtn', 'Join Session');
+    showNotification('✅ Successfully joined the game!', 'success');
+    
   } catch (error) {
-    alert('Failed to join session. Please check the session code and try again.');
+    hideLoadingButton('joinSessionBtn', 'Join Session');
+    showNotification('❌ Failed to join session. Please check the session code and try again.', 'error');
   }
 }
 
@@ -121,16 +135,27 @@ async function loadLobby() {
 async function loadScenarios() {
   try {
     console.log('Loading scenarios for theme:', gameState.currentTheme);
+    showLoadingOverlay('🎭 Crafting terrifying scenarios...');
+    
     const scenarios = await apiCall(`/api/game/scenarios/${gameState.currentTheme}`);
     gameState.scenarios = scenarios;
     console.log('Loaded scenarios:', scenarios);
+    
+    hideLoadingOverlay();
+    showNotification('✅ Scenarios loaded successfully!', 'success');
+    
   } catch (error) {
     console.error('Failed to load scenarios from API:', error);
+    hideLoadingOverlay();
+    
     // Fall back to mock scenarios
     console.log('Using mock scenarios as fallback');
     gameState.scenarios = mockScenarios;
+    
+    showNotification('⚠️ Using backup scenarios - some features may be limited', 'warning');
   }
 }
+
 
 // Mock scenarios for testing (until we implement the API endpoint)
 const mockScenarios = [
@@ -148,11 +173,21 @@ const mockScenarios = [
 
 // Start the game
 async function startGame() {
-  await loadScenarios();
-  gameState.currentQuestion = 1;
-  displayCurrentScenario();
-  showScreen('gameScreen');
+  showLoadingButton('startGameBtn', 'Starting Game...');
+  
+  try {
+    await loadScenarios();
+    gameState.currentQuestion = 1;
+    displayCurrentScenario();
+    showScreen('gameScreen');
+    
+    hideLoadingButton('startGameBtn', 'Start Game');
+  } catch (error) {
+    hideLoadingButton('startGameBtn', 'Start Game');
+    showNotification('❌ Failed to start game. Please try again.', 'error');
+  }
 }
+
 
 // Display current scenario
 function displayCurrentScenario() {
@@ -181,9 +216,17 @@ async function submitAnswer() {
   const answer = document.getElementById('playerAnswer').value.trim();
   
   if (!answer) {
-    alert('Please provide an answer before submitting.');
+    showNotification('⚠️ Please provide an answer before submitting.', 'warning');
     return;
   }
+
+  if (answer.length < 10) {
+    showNotification('⚠️ Please provide a more detailed answer.', 'warning');
+    return;
+  }
+
+  showLoadingButton('submitAnswerBtn', 'Analyzing...');
+  showLoadingOverlay('🧠 AI analyzing your survival choices...');
 
   try {
     const response = await apiCall('/api/game/submit-answer', {
@@ -197,6 +240,13 @@ async function submitAnswer() {
     });
     
     console.log('Answer submitted:', response);
+    hideLoadingOverlay();
+    
+    // Show score feedback if available
+    if (response.score) {
+      const scoreColor = response.score >= 70 ? 'success' : response.score >= 40 ? 'warning' : 'error';
+      showNotification(`📊 Survival Score: ${response.score}/100`, scoreColor);
+    }
     
     // Clear the answer field
     document.getElementById('playerAnswer').value = '';
@@ -205,24 +255,54 @@ async function submitAnswer() {
     if (gameState.currentQuestion < gameState.scenarios.length) {
       gameState.currentQuestion++;
       console.log('Moving to question:', gameState.currentQuestion);
-      displayCurrentScenario();
+      
+      // Show loading for next scenario
+      showLoadingOverlay('🎬 Preparing next scenario...');
+      
+      // Small delay for dramatic effect
+      setTimeout(() => {
+        hideLoadingOverlay();
+        displayCurrentScenario();
+        hideLoadingButton('submitAnswerBtn', 'Submit Answer');
+      }, 1500);
+      
     } else {
       console.log('Game completed, showing results');
+      hideLoadingButton('submitAnswerBtn', 'Submit Answer');
+      
+      // Don't show another overlay here since showResults() will show its own
       await showResults();
     }
+    
   } catch (error) {
     console.error('Failed to submit answer:', error);
-    alert('Failed to submit answer. Please try again.');
+    hideLoadingOverlay();
+    hideLoadingButton('submitAnswerBtn', 'Submit Answer');
+    showNotification('❌ Failed to submit answer. Please try again.', 'error');
   }
 }
+
 
 // Show final results
 async function showResults() {
   try {
+    showLoadingOverlay('📊 Generating final results...');
+    
     const results = await apiCall(`/api/game/results/${gameState.sessionCode}`);
+    
+    // Ensure overlay is hidden before proceeding
+    hideLoadingOverlay();
     
     const resultsContainer = document.getElementById('resultsContainer');
     resultsContainer.innerHTML = '';
+    
+    // Check if results exist and have data
+    if (!results || results.length === 0) {
+      console.warn('No results received from API');
+      showMockResults();
+      showNotification('⚠️ No results available - showing placeholder', 'warning');
+      return;
+    }
     
     results.forEach((result, index) => {
       const resultDiv = document.createElement('div');
@@ -230,19 +310,26 @@ async function showResults() {
       resultDiv.innerHTML = `
         <div class="rank-number">${index + 1}</div>
         <div class="result-name">${result.player_name}</div>
-        <div class="result-fate">${result.fate}</div>
-        <div class="result-analysis">${result.analysis}</div>
+        <div class="result-fate">${result.fate_title || 'Unknown Fate'}</div>
+        <div class="result-narrative">${result.narrative || 'No story available'}</div>
+        <div class="result-analysis">${result.survival_analysis || result.analysis || 'No analysis available'}</div>
       `;
       resultsContainer.appendChild(resultDiv);
     });
     
     showScreen('resultsScreen');
+    showNotification('🎭 Final results revealed!', 'success');
+    
   } catch (error) {
     console.error('Failed to load results:', error);
+    hideLoadingOverlay(); // Ensure overlay is hidden on error too
+    
     // Show mock results for testing
     showMockResults();
+    showNotification('⚠️ Using backup results - some features may be limited', 'warning');
   }
 }
+
 
 // Show mock results for testing
 function showMockResults() {
@@ -256,6 +343,75 @@ function showMockResults() {
     </div>
   `;
   showScreen('resultsScreen');
+}
+
+// Add these utility functions for loading states and notifications
+function showLoadingButton(buttonId, loadingText = 'Loading...') {
+  const btn = document.getElementById(buttonId);
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loading-spinner"></span>${loadingText}`;
+  }
+}
+
+function hideLoadingButton(buttonId, originalText) {
+  const btn = document.getElementById(buttonId);
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
+function showNotification(message, type = 'info') {
+  // Remove existing notifications
+  document.querySelectorAll('.notification').forEach(n => n.remove());
+  
+  const notification = document.createElement('div');
+  notification.className = `notification ${type}`;
+  notification.innerHTML = `
+    <span>${message}</span>
+    <button class="notification-close">&times;</button>
+  `;
+  
+  document.body.appendChild(notification);
+  
+  // Auto remove after 5 seconds
+  setTimeout(() => {
+    if (notification.parentNode) {
+      notification.remove();
+    }
+  }, 5000);
+  
+  // Manual close
+  notification.querySelector('.notification-close').onclick = () => notification.remove();
+}
+
+function showLoadingOverlay(message = 'Loading...') {
+  // Remove any existing overlays first
+  hideLoadingOverlay();
+  
+  const overlay = document.createElement('div');
+  overlay.id = 'loadingOverlay';
+  overlay.className = 'loading-overlay';
+  overlay.innerHTML = `
+    <div class="loading-content">
+      <div class="loading-spinner large"></div>
+      <div class="loading-message">${message}</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  console.log('Loading overlay shown with message:', message);
+}
+
+
+function hideLoadingOverlay() {
+  const overlay = document.getElementById('loadingOverlay');
+  if (overlay) {
+    console.log('Removing loading overlay');
+    overlay.remove();
+  } else {
+    console.warn('Loading overlay not found when trying to hide it');
+  }
 }
 
 // Theme selection
@@ -293,6 +449,25 @@ document.addEventListener('DOMContentLoaded', function() {
     option.addEventListener('click', () => {
       selectTheme(option.dataset.theme);
     });
+
+    // Add character counter to answer textarea
+  const answerTextarea = document.getElementById('playerAnswer');
+  if (answerTextarea) {
+    const counterDiv = document.createElement('div');
+    counterDiv.className = 'character-counter';
+    answerTextarea.parentNode.appendChild(counterDiv);
+
+    answerTextarea.addEventListener('input', function() {
+      const length = this.value.length;
+      counterDiv.textContent = `${length} characters`;
+      
+      if (length > 500) {
+        counterDiv.className = 'character-counter warning';
+      } else {
+        counterDiv.className = 'character-counter';
+      }
+    });
+  } 
   });
   
   // Enter key handlers

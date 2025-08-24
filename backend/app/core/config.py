@@ -7,9 +7,13 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
-    # Updated Gemini Settings
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # GitHub Models Settings (replacing Gemini)
+    github_token: str = ""
+    openai_model: str = "openai/gpt-4o"  # or "openai/gpt-4o-mini" for faster/cheaper
+    
+    # Keep these for backward compatibility if needed
+    gemini_api_key: str = ""  # deprecated
+    gemini_model: str = ""    # deprecated
 
     class Config:
         env_file = ".env"
