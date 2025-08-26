@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FrightFate: Who Dies First?</title>
+    <title>FrightFate: Try to survive?</title>
   </head>
   <body>
     <div id="app">
@@ -17,7 +17,7 @@
       <div class="container">
         <div class="title">
           <h1>FrightFate</h1>
-          <p class="subtitle">Who Dies First?</p>
+          <p class="subtitle">Try to survive</p>
         </div>
 
         <!-- Home Screen -->
@@ -25,22 +25,22 @@
           <div class="card">
             <h2>Welcome to the Ultimate Horror Survival Challenge</h2>
             <p style="margin: 20px 0; line-height: 1.6;">
-              Face 10 terrifying scenarios and discover your fate. Will you be the lone survivor, 
-              or the first to meet your doom? Gather your friends and find out who has what it takes 
-              to survive the night...
+              Face dynamic scenarios where your choices shape the story. Will you be the lone survivor, 
+              or will your poor decisions lead to an early grave? Each choice matters - make too many 
+              mistakes and you'll be eliminated before the story ends...
             </p>
             
             <div class="theme-selector">
               <div class="theme-option selected" data-theme="haunted_house">
-                <h4>🏚️ Haunted House</h4>
+                <h4>Haunted House</h4>
                 <p>Trapped in a cursed Victorian mansion with dark secrets</p>
               </div>
               <div class="theme-option" data-theme="zombie_outbreak">
-                <h4>🧟 Zombie Outbreak</h4>
+                <h4>Zombie Outbreak</h4>
                 <p>Survive the undead apocalypse in a post-apocalyptic world</p>
               </div>
               <div class="theme-option" data-theme="slasher_movie">
-                <h4>🔪 Slasher Movie</h4>
+                <h4>Slasher Movie</h4>
                 <p>Escape a masked killer in a classic horror movie scenario</p>
               </div>
             </div>
@@ -81,9 +81,16 @@
             
             <div class="session-code" id="displaySessionCode">ABC123</div>
             
-            <h3>Players in Session</h3>
-            <div class="players-list" id="playersList">
-              <!-- Players will be populated here -->
+            <h3>Active Players</h3>
+            <div class="players-list" id="activePlayersList">
+              <!-- Active players will be populated here -->
+            </div>
+            
+            <div id="eliminatedSection" style="display: none;">
+              <h3 style="color: #ff6b6b;">Eliminated Players</h3>
+              <div class="players-list eliminated" id="eliminatedPlayersList">
+                <!-- Eliminated players will be populated here -->
+              </div>
             </div>
             
             <div class="controls">
@@ -97,18 +104,46 @@
         <div id="gameScreen" class="screen">
           <div class="progress-bar">
             <div class="progress-fill" id="progressFill"></div>
+            <div class="progress-text" id="progressText">Question 1 of 5</div>
+          </div>
+
+          <!-- Add this to your Game Screen section, right after the progress bar -->
+          <div class="question-timer">
+            <div class="timer-label">Time Remaining:</div>
+            <div class="timer-display" id="timerDisplay">2:00</div>
+            <div class="timer-warning" id="timerWarning" style="display: none;">
+              Answer quickly or face elimination!
+            </div>
           </div>
           
           <div class="scenario" id="currentScenario">
-            <div class="scenario-number" id="scenarioNumber">1</div>
+            <div class="scenario-header">
+              <div class="scenario-number" id="scenarioNumber">1</div>
+              <div class="story-context" id="storyContext">Your journey begins...</div>
+            </div>
             <h3 id="scenarioTitle">Loading...</h3>
-            <p id="scenarioDescription">Please wait while we load the first scenario...</p>
+            <p id="scenarioDescription">Please wait while we craft your personalized scenario...</p>
+            
+            <div class="narrative-consequence" id="narrativeConsequence" style="display: none;">
+              <h4>Consequences of your previous actions:</h4>
+              <p id="consequenceText"></p>
+            </div>
           </div>
           
           <div class="card">
             <div class="input-group">
               <label for="playerAnswer">What do you do?</label>
-              <textarea id="playerAnswer" placeholder="Describe your actions in detail..."></textarea>
+              <textarea id="playerAnswer" placeholder="Describe your actions in detail... Your choices will affect the story! (Minimum 10 characters required)"></textarea>
+              <div class="answer-validation" id="answerValidation">
+                <div class="validation-status" id="validationStatus">
+                  <span class="status-icon" id="statusIcon">⚠️</span>
+                  <span class="status-text" id="statusText">Answer too short - provide more detail</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="choice-classification" id="choiceClassification" style="display: none;">
+              <p>Your last choice was classified as: <span id="classificationText"></span></p>
             </div>
             
             <div class="controls">
@@ -117,13 +152,38 @@
           </div>
         </div>
 
+        <!-- Elimination Screen -->
+        <div id="eliminationScreen" class="screen">
+          <div class="card elimination-card">
+            <div class="elimination-header">
+              <h2>YOU HAVE BEEN ELIMINATED</h2>
+              <p class="elimination-subtitle">Your poor choices have sealed your fate...</p>
+            </div>
+            
+            <div class="elimination-content" id="eliminationContent">
+              <div class="death-narrative" id="deathNarrative">
+                <!-- Death narrative will be populated here -->
+              </div>
+              
+              <div class="elimination-analysis" id="eliminationAnalysis">
+                <!-- Analysis will be populated here -->
+              </div>
+            </div>
+            
+            <div class="controls">
+              <button class="btn btn-secondary" id="watchOthersBtn">Watch Other Players</button>
+              <button class="btn" id="returnToLobbyBtn">Return to Lobby</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Results Screen -->
         <div id="resultsScreen" class="screen">
           <div class="card">
-            <h2>🎭 The Final Verdict</h2>
-            <p style="text-align: center; margin-bottom: 30px; font-style: italic;">
-              The fate of each player has been sealed...
-            </p>
+            <h2>The Final Verdict</h2>
+            <div class="results-summary" id="resultsSummary">
+              <p>Loading final results...</p>
+            </div>
             
             <div id="resultsContainer">
               <!-- Results will be populated here -->
