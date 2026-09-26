@@ -26,6 +26,9 @@ class Player(Base):
     is_ready = Column(Boolean, default=False)
     survival_score = Column(Integer, default=0)
     death_order = Column(Integer, nullable=True)
+    is_eliminated = Column(Boolean, default=False, index=True)
+    elimination_reason = Column(Text, nullable=True)
+    death_narrative = Column(JSON, nullable=True)
     
     session = relationship("GameSession", back_populates="players")
     answers = relationship("PlayerAnswer", back_populates="player")
@@ -40,6 +43,22 @@ class Scenario(Base):
     description = Column(Text, nullable=False)
     scoring_criteria = Column(JSON)  # Store scoring logic as JSON
 
+class LeaderboardEntry(Base):
+    """A persisted high-score record. We don't collect accounts, so an entry is
+    a name + score snapshot written when a session's final results are built."""
+    __tablename__ = "leaderboard_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_name = Column(String(100), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("game_sessions.id"), nullable=True)
+    session_code = Column(String(10), nullable=True)
+    theme = Column(String(50), default="haunted_house", index=True)
+    score = Column(Integer, default=0)
+    survived = Column(Boolean, default=False)
+    eliminated_at = Column(Integer, nullable=True)  # question number at which they died
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class PlayerAnswer(Base):
     __tablename__ = "player_answers"
     
@@ -49,6 +68,10 @@ class PlayerAnswer(Base):
     question_number = Column(Integer, nullable=False)
     answer_text = Column(Text, nullable=False)
     score = Column(Integer, default=0)
+    story_context = Column(Text, nullable=True)
+    choice_classification = Column(String(50), nullable=True)
+    is_eliminated = Column(Boolean, default=False)
+    elimination_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     session = relationship("GameSession", back_populates="answers")

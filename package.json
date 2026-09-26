@@ -1,0 +1,10 @@
+{
+  "name": "fright-fate",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --cwd=frontend dev",
+    "dev:frontend": "bun run --cwd=frontend dev:only",
+    "build": "bun run --cwd=frontend build",
+    "start": "bun run --cwd=frontend start"
+  }
+}

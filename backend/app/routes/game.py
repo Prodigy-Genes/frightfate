@@ -1,15 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models.game import GameSession, Player, Scenario, PlayerAnswer
+from app.models.game import GameSession, Player, Scenario, PlayerAnswer, LeaderboardEntry
 from pydantic import BaseModel
 from typing import Optional
 import random
 import string
 from app.services.ai_service import ai_service
+from app.services.feed import fate_feed
+from app.routes.websocket import manager as ws_manager
 import asyncio
 from asyncio import timeout
+from datetime import datetime, timezone
 import json
+import sys
+
+def log_info(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            print(msg.encode("ascii", "replace").decode("ascii"))
+        except Exception:
+            pass
 
 router = APIRouter()
 
@@ -19,6 +32,11 @@ class SubmitAnswerRequest(BaseModel):
     player_id: int
     question_number: int
     answer_text: str
+    # The exact scenario the player saw — prevents re-generation mismatch
+    scenario_title: Optional[str] = ""
+    scenario_description: Optional[str] = ""
+    scenario_survival_factors: Optional[list] = []
+    scenario_death_risk: Optional[str] = "medium"
 
 class PlayerState(BaseModel):
     player_id: int
@@ -30,15 +48,60 @@ def generate_session_code():
     """Generate a unique 6-character session code"""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
+# Sessions older than this are considered abandoned and purged on new creates.
+SESSION_MAX_AGE_HOURS = 6
+
+
+def purge_stale_sessions(db: Session, max_age_hours: int = SESSION_MAX_AGE_HOURS) -> int:
+    """Delete abandoned sessions (and their players/answers) older than the cutoff.
+
+    Runs opportunistically on session creation, so no scheduler is needed for the
+    common case. Leaderboard entries are intentionally kept — they outlive the
+    session that produced them.
+    """
+    cutoff = datetime.now(timezone.utc).timestamp() - max_age_hours * 3600
+    stale = (
+        db.query(GameSession)
+        .filter(GameSession.created_at.isnot(None))
+        .all()
+    )
+    purged = 0
+    for session in stale:
+        created = session.created_at
+        # SQLite stores naive datetimes (UTC by convention from func.now());
+        # Postgres may hand back tz-aware ones. Normalize before comparing.
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created.timestamp() < cutoff:
+            db.query(PlayerAnswer).filter(PlayerAnswer.session_id == session.id).delete()
+            db.query(Player).filter(Player.session_id == session.id).delete()
+            db.delete(session)
+            purged += 1
+    if purged:
+        db.commit()
+    return purged
+
 @router.post("/create-session")
-async def create_session(theme: str = "haunted_house", db: Session = Depends(get_db)):
-    """Create a new game session with dynamic narrative support"""
+async def create_session(payload: dict = Body(default=None), theme: str = "haunted_house", db: Session = Depends(get_db)):
+    """Create a new game session with dynamic narrative support.
+
+    The theme arrives in the JSON body ({"theme": "zombie_outbreak"}) from the
+    web client; the query param stays as a fallback for API callers.
+    """
+    if isinstance(payload, dict) and payload.get("theme"):
+        theme = str(payload["theme"])
     session_code = generate_session_code()
     
     # Make sure code is unique
     while db.query(GameSession).filter(GameSession.session_code == session_code).first():
         session_code = generate_session_code()
     
+    # Opportunistic hygiene: clear out abandoned sessions before making room.
+    try:
+        purge_stale_sessions(db)
+    except Exception as e:
+        log_info(f"Stale session purge skipped: {e}")
+
     session = GameSession(
         session_code=session_code,
         theme=theme,
@@ -49,11 +112,88 @@ async def create_session(theme: str = "haunted_house", db: Session = Depends(get
     db.commit()
     db.refresh(session)
     
+    event = fate_feed.record(session.session_code, "session_created", "A new nightmare opens its doors.", theme=session.theme)
+    await ws_manager.broadcast_event(session.session_code, {"type": "feed_event", "event": event})
+    
     return {
         "session_code": session.session_code,
         "theme": session.theme,
         "status": session.status
     }
+
+def _upsert_leaderboard_entry(db: Session, session, player_name: str, score: int, survived: bool, eliminated_at=None):
+    """Insert or refresh a leaderboard row for a player in this session."""
+    entry = db.query(LeaderboardEntry).filter(
+        LeaderboardEntry.session_id == session.id,
+        LeaderboardEntry.player_name == player_name,
+    ).first()
+
+    if entry:
+        entry.score = score
+        entry.survived = survived
+        entry.theme = session.theme
+        entry.eliminated_at = eliminated_at
+    else:
+        entry = LeaderboardEntry(
+            player_name=player_name,
+            session_id=session.id,
+            session_code=session.session_code,
+            theme=session.theme,
+            score=score,
+            survived=survived,
+            eliminated_at=eliminated_at,
+        )
+        db.add(entry)
+
+
+@router.get("/feed/{session_code}")
+async def get_fate_feed(session_code: str, after_seq: int = 0, db: Session = Depends(get_db)):
+    """Shared narrative feed for a session (replayable by late joiners)."""
+    session = db.query(GameSession).filter(GameSession.session_code == session_code).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    events = fate_feed.get(session_code, after_seq=after_seq)
+    return {"session_code": session_code, "events": events}
+
+
+@router.get("/leaderboard")
+async def get_leaderboard(theme: Optional[str] = None, limit: int = 25, db: Session = Depends(get_db)):
+    """Top survival scores, optionally filtered to a single theme.
+
+    No accounts are required: entries are name+score snapshots recorded when a
+    session's final results are generated.
+    """
+    limit = max(1, min(limit, 100))
+
+    query = db.query(LeaderboardEntry)
+    if theme and theme != "all":
+        query = query.filter(LeaderboardEntry.theme == theme)
+
+    entries = (
+        query.order_by(LeaderboardEntry.score.desc(), LeaderboardEntry.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+    ranked = []
+    for index, entry in enumerate(entries, start=1):
+        ranked.append({
+            "rank": index,
+            "player_name": entry.player_name,
+            "theme": entry.theme or "haunted_house",
+            "score": entry.score or 0,
+            "survived": bool(entry.survived),
+            "eliminated_at": entry.eliminated_at,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        })
+
+    return {
+        "theme": theme or "all",
+        "limit": limit,
+        "entries": ranked,
+    }
+
 
 @router.post("/join-session/{session_code}")
 async def join_session(session_code: str, player_name: str, db: Session = Depends(get_db)):
@@ -84,6 +224,11 @@ async def join_session(session_code: str, player_name: str, db: Session = Depend
     db.commit()
     db.refresh(player)
     
+    event = fate_feed.record(
+        session_code, "player_joined", f"{player.name} stepped through the door.", player_name=player.name
+    )
+    await ws_manager.broadcast_event(session_code, {"type": "feed_event", "event": event})
+    
     return {
         "player_id": player.id,
         "session_code": session.session_code,
@@ -105,17 +250,23 @@ async def get_session(session_code: str, db: Session = Depends(get_db)):
     active_players = []
     
     for player in players:
-        # Check if player has been eliminated (has an elimination record in their latest answer)
-        latest_answer = db.query(PlayerAnswer).filter(
-            PlayerAnswer.player_id == player.id
-        ).order_by(PlayerAnswer.id.desc()).first()
-        
-        if latest_answer and hasattr(latest_answer, 'is_eliminated') and getattr(latest_answer, 'is_eliminated', False):
+        is_elim = bool(player.is_eliminated)
+        elim_reason = player.elimination_reason or "Unknown"
+
+        if not is_elim:
+            latest_answer = db.query(PlayerAnswer).filter(
+                PlayerAnswer.player_id == player.id
+            ).order_by(PlayerAnswer.id.desc()).first()
+            if latest_answer and getattr(latest_answer, 'is_eliminated', False):
+                is_elim = True
+                elim_reason = getattr(latest_answer, 'elimination_reason', 'Unknown')
+
+        if is_elim:
             eliminated_players.append({
                 "id": player.id, 
                 "name": player.name, 
                 "is_eliminated": True,
-                "elimination_reason": getattr(latest_answer, 'elimination_reason', 'Unknown')
+                "elimination_reason": elim_reason
             })
         else:
             active_players.append({
@@ -136,7 +287,7 @@ async def get_session(session_code: str, db: Session = Depends(get_db)):
     }
 
 @router.get("/scenario/{session_code}/{question_number}")
-async def get_dynamic_scenario(session_code: str, question_number: int, player_id: int, db: Session = Depends(get_db)):
+async def get_dynamic_scenario(session_code: str, question_number: int, player_id: int, previous_state: Optional[str] = None, db: Session = Depends(get_db)):
     """Get a dynamically generated scenario based on player's history"""
     print(f"🎭 Getting dynamic scenario for player {player_id}, question {question_number}")
     
@@ -177,9 +328,21 @@ async def get_dynamic_scenario(session_code: str, question_number: int, player_i
                 previous_scenarios = []
                 story_context = player_choices[-1].get('story_context', '') if player_choices else ''
                 
+                # The client echoes the previous round's world-state back to us so the
+                # simulation can carry injuries, blocked routes and threat awareness
+                # forward without needing any server-side session storage.
+                prev_state = None
+                if previous_state:
+                    try:
+                        prev_state = json.loads(previous_state)
+                        if not isinstance(prev_state, dict):
+                            prev_state = None
+                    except (ValueError, TypeError):
+                        prev_state = None
+
                 print(f"🎬 Generating scenario {question_number} based on {len(player_choices)} previous choices")
                 scenario = await ai_service.generate_next_scenario(
-                    theme_value, question_number, previous_scenarios, player_choices, story_context
+                    theme_value, question_number, previous_scenarios, player_choices, story_context, prev_state
                 )
             
             if scenario:
@@ -215,41 +378,33 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="Player not found in session")
     
     # Check if player is already eliminated
-    latest_answer = db.query(PlayerAnswer).filter(
-        PlayerAnswer.player_id == request.player_id
-    ).order_by(PlayerAnswer.id.desc()).first()
-    
-    if latest_answer and hasattr(latest_answer, 'is_eliminated') and latest_answer.is_eliminated:
+    if player.is_eliminated:
         raise HTTPException(status_code=400, detail="Player has been eliminated and cannot continue")
     
     # Get current scenario
     theme_value = str(getattr(session, "theme", "")) or "haunted_house"
     
-    try:
-        async with timeout(20):
-            if request.question_number == 1:
+    # Use the scenario the player actually saw (sent from frontend)
+    # This prevents the critical bug where analysis was run against a newly
+    # generated scenario instead of the one the player responded to.
+    if request.scenario_description:
+        scenario = {
+            "title": request.scenario_title or "Unknown Scenario",
+            "description": request.scenario_description,
+            "survival_factors": request.scenario_survival_factors or [],
+            "death_risk_level": request.scenario_death_risk or "medium",
+        }
+        log_info(f"✅ Using scenario from request: {scenario['title']}")
+    else:
+        # Fallback: regenerate if frontend didn't send scenario (old clients)
+        log_info("⚠️  No scenario in request, regenerating (may cause mismatch)")
+        theme_value = str(getattr(session, "theme", "")) or "haunted_house"
+        try:
+            async with timeout(20):
                 scenario = await ai_service.generate_initial_scenario(theme_value)
-            else:
-                # Get player history for dynamic scenario generation
-                previous_answers = db.query(PlayerAnswer).filter(
-                    PlayerAnswer.player_id == request.player_id
-                ).order_by(PlayerAnswer.question_number).all()
-                
-                player_choices = []
-                for answer in previous_answers:
-                    choice_data = {
-                        "question_number": answer.question_number,
-                        "answer_text": answer.answer_text,
-                        "score": answer.score
-                    }
-                    player_choices.append(choice_data)
-                
-                scenario = await ai_service.generate_next_scenario(
-                    theme_value, request.question_number, [], player_choices, ""
-                ) or ai_service._get_fallback_initial_scenario(theme_value)
-    except Exception as e:
-        print(f"Error getting scenario: {e}")
-        scenario = ai_service._get_fallback_initial_scenario(theme_value)
+        except Exception as e:
+            log_info(f"Error getting fallback scenario: {e}")
+            scenario = ai_service._get_fallback_initial_scenario(theme_value)
     
     # Get player's choice history for death analysis
     player_history = []
@@ -261,7 +416,9 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
         player_history.append({
             "question_number": answer.question_number,
             "score": answer.score,
-            "answer_text": answer.answer_text[:100]  # Truncated for analysis
+            "answer_text": answer.answer_text,
+            "story_context": getattr(answer, 'story_context', '') or "",
+            "choice_classification": getattr(answer, 'choice_classification', 'neutral') or "neutral"
         })
     
     # AI Analysis with death check
@@ -269,21 +426,23 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
     try:
         async with timeout(20):
             analysis_result = await ai_service.analyze_answer_with_death_check(
-                scenario, request.answer_text, player_history
+                scenario, request.answer_text, player_history, theme_value
             )
-            print(f"✅ AI analysis complete: score {analysis_result['survival_score']}, death: {analysis_result.get('instant_death', False)}")
+            log_info(f"AI analysis complete: score {analysis_result['survival_score']}, death: {analysis_result.get('instant_death', False)}")
     except Exception as e:
-        print(f"❌ Error analyzing answer: {e}")
+        log_info(f"Error analyzing answer: {e}")
         # Fallback analysis
         analysis_result = ai_service._fallback_death_analysis(
             request.answer_text, 
             scenario.get("death_risk_level", "medium"), 
-            len([h for h in player_history if h.get("score", 50) < 30])
+            len([h for h in player_history if h.get("score", 50) < 30]),
+            theme_value,
         )
     
     # Check for instant death
     instant_death = analysis_result.get("instant_death", False)
     score = analysis_result.get("survival_score", 50)
+    death_reason = analysis_result.get("death_reason", "Poor survival choices") if instant_death else None
     
     # Save the answer
     existing_answer = db.query(PlayerAnswer).filter(
@@ -293,72 +452,101 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
     ).first()
     
     if existing_answer:
-        setattr(existing_answer, "answer_text", request.answer_text)
-        setattr(existing_answer, "score", score)
+        existing_answer.answer_text = request.answer_text
+        existing_answer.score = score
+        existing_answer.story_context = analysis_result.get("story_progression", "")
+        existing_answer.choice_classification = analysis_result.get("choice_classification", "neutral")
         if instant_death:
-            setattr(existing_answer, "is_eliminated", True)
-            setattr(existing_answer, "elimination_reason", analysis_result.get("death_reason", "Poor survival choices"))
-        db.commit()
+            existing_answer.is_eliminated = True
+            existing_answer.elimination_reason = death_reason
     else:
-        answer_data = {
-            "session_id": session.id,
-            "player_id": request.player_id,
-            "question_number": request.question_number,
-            "answer_text": request.answer_text,
-            "score": score
-        }
-        
-        if instant_death:
-            answer_data["is_eliminated"] = True
-            answer_data["elimination_reason"] = analysis_result.get("death_reason", "Poor survival choices")
-        
-        answer = PlayerAnswer(**answer_data)
+        answer = PlayerAnswer(
+            session_id=session.id,
+            player_id=request.player_id,
+            question_number=request.question_number,
+            answer_text=request.answer_text,
+            score=score,
+            story_context=analysis_result.get("story_progression", ""),
+            choice_classification=analysis_result.get("choice_classification", "neutral"),
+            is_eliminated=instant_death,
+            elimination_reason=death_reason,
+        )
         db.add(answer)
-        db.commit()
     
+    # Update player score
+    db.commit()
+    all_scores = db.query(PlayerAnswer.score).filter(PlayerAnswer.player_id == player.id).all()
+    player.survival_score = sum(s[0] for s in all_scores)
+    
+    better_alternatives = analysis_result.get("better_alternatives") or []
+    if not better_alternatives and scenario and scenario.get("branching_paths"):
+        better_alternatives = [bp.get("description", "") for bp in scenario.get("branching_paths") if bp.get("description")]
+    if not better_alternatives:
+        better_alternatives = [
+            "Utilize stealth, minimize light and sound, and assess exit vectors before committing.",
+            "Improvise a sturdy physical barrier or search for secondary concealed escape routes."
+        ]
+
     response_data = {
         "message": "Answer submitted successfully",
         "score": score,
         "analysis": analysis_result.get("analysis", ""),
         "story_progression": analysis_result.get("story_progression", ""),
-        "choice_classification": analysis_result.get("choice_classification", "neutral")
+        "choice_classification": analysis_result.get("choice_classification", "neutral"),
+        "better_alternatives": better_alternatives,
+        "host_verdict": analysis_result.get("host_verdict", ""),
+        "death_epitaph": analysis_result.get("death_epitaph"),
+        "engine": "ai" if analysis_result.get("engine") == "ai" else "fallback",
     }
     
     # If player died instantly, generate death narrative
     if instant_death:
-        print(f"💀 Player {request.player_id} has been eliminated")
+        player.is_eliminated = True
+        player.elimination_reason = death_reason
+        log_info(f"Player {request.player_id} has been eliminated: {death_reason}")
+        event = fate_feed.record(
+            request.session_code,
+            "player_eliminated",
+            f"💀 {player.name} died: {death_reason}",
+            player_name=player.name,
+        )
+        await ws_manager.broadcast_event(request.session_code, {"type": "feed_event", "event": event})
         
         try:
             player_data = {
                 "player_name": player.name,
-                "total_score": sum(a.score for a in db.query(PlayerAnswer).filter(PlayerAnswer.player_id == request.player_id).all()),
+                "total_score": player.survival_score,
                 "answer_count": len(player_history) + 1
             }
             
-            death_narrative = await ai_service.generate_death_narrative(
-                player_data, analysis_result.get("death_reason", "Poor survival choices")
-            )
+            death_narrative = await ai_service.generate_death_narrative(player_data, death_reason, theme_value)
+            player.death_narrative = death_narrative
             
             response_data.update({
                 "instant_death": True,
                 "death_narrative": death_narrative,
                 "game_over": True,
-                "elimination_reason": analysis_result.get("death_reason", "Poor survival choices")
+                "elimination_reason": death_reason
             })
             
         except Exception as e:
-            print(f"❌ Error generating death narrative: {e}")
+            log_info(f"Error generating death narrative: {e}")
+            fallback_narrative = {
+                "player_name": player.name,
+                "eliminated": True,
+                "death_narrative": "Your poor decisions caught up with you, leading to your untimely demise.",
+                "fate_title": "💀 ELIMINATED",
+                "elimination_reason": death_reason
+            }
+            player.death_narrative = fallback_narrative
             response_data.update({
                 "instant_death": True,
-                "death_narrative": {
-                    "player_name": player.name,
-                    "eliminated": True,
-                    "death_narrative": "Your poor decisions caught up with you, leading to your untimely demise.",
-                    "fate_title": "💀 ELIMINATED"
-                },
-                "game_over": True
+                "death_narrative": fallback_narrative,
+                "game_over": True,
+                "elimination_reason": death_reason
             })
     
+    db.commit()
     return response_data
 
 @router.get("/check-elimination/{session_code}/{player_id}")
@@ -368,14 +556,11 @@ async def check_player_elimination(session_code: str, player_id: int, db: Sessio
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    latest_answer = db.query(PlayerAnswer).filter(
-        PlayerAnswer.player_id == player_id
-    ).order_by(PlayerAnswer.id.desc()).first()
-    
-    if latest_answer and hasattr(latest_answer, 'is_eliminated') and getattr(latest_answer, 'is_eliminated', False):
+    player = db.query(Player).filter(Player.id == player_id, Player.session_id == session.id).first()
+    if player and player.is_eliminated:
         return {
             "is_eliminated": True,
-            "elimination_reason": getattr(latest_answer, 'elimination_reason', 'Unknown'),
+            "elimination_reason": player.elimination_reason or "Poor survival choices",
             "can_continue": False
         }
     
@@ -387,7 +572,7 @@ async def check_player_elimination(session_code: str, player_id: int, db: Sessio
 @router.get("/results/{session_code}")
 async def get_results(session_code: str, db: Session = Depends(get_db)):
     """Get AI-generated final results including eliminated players"""
-    print(f"🏆 Generating results for session: {session_code}")
+    log_info(f"Generating results for session: {session_code}")
     
     session = db.query(GameSession).filter(GameSession.session_code == session_code).first()
     if not session:
@@ -402,10 +587,7 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
     for player in players:
         answers = db.query(PlayerAnswer).filter(PlayerAnswer.player_id == player.id).all()
         total_score = sum(answer.score for answer in answers)
-        
-        # Check if player was eliminated
-        latest_answer = answers[-1] if answers else None
-        is_eliminated = latest_answer and hasattr(latest_answer, 'is_eliminated') and getattr(latest_answer, 'is_eliminated', False)
+        is_eliminated = bool(player.is_eliminated)
         
         player_data = {
             "player_name": player.name,
@@ -416,20 +598,56 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
         }
         
         if is_eliminated:
-            player_data["elimination_reason"] = getattr(latest_answer, 'elimination_reason', 'Poor survival choices')
+            player_data["elimination_reason"] = player.elimination_reason or "Poor survival choices"
             eliminated_players_data.append(player_data)
         else:
             players_data.append(player_data)
     
-    print(f"📊 Processing results: {len(players_data)} survivors, {len(eliminated_players_data)} eliminated")
+    log_info(f"Processing results: {len(players_data)} survivors, {len(eliminated_players_data)} eliminated")
     
+    # Cap the story: record the final verdicts on the shared Fate Feed.
+    try:
+        for player_data in players_data:
+            event = fate_feed.record(
+                session_code,
+                "survived",
+                f"✟ {player_data['player_name']} survived with {int(player_data.get('total_score', 0) or 0)} points.",
+                player_name=player_data["player_name"],
+            )
+            await ws_manager.broadcast_event(session_code, {"type": "feed_event", "event": event})
+    except Exception as e:
+        log_info(f"Feed record error: {e}")
+    
+    # Record scores on the leaderboard. We do this before the (slow) AI calls
+    # so a timeout can never lose a finished game's scores.
+    for player_data in players_data:
+        _upsert_leaderboard_entry(
+            db,
+            session,
+            player_data["player_name"],
+            int(player_data.get("total_score", 0) or 0),
+            True,
+        )
+    for player_data in eliminated_players_data:
+        _upsert_leaderboard_entry(
+            db,
+            session,
+            player_data["player_name"],
+            int(player_data.get("total_score", 0) or 0),
+            False,
+            eliminated_at=player_data.get("answer_count"),
+        )
+    db.commit()
+
     # Generate AI results with timeout
     try:
         async with timeout(25):
             # Generate results for survivors
             survivor_results = []
             if players_data:
-                survivor_results = await ai_service.generate_final_results(players_data)
+                survivor_results = await ai_service.generate_final_results(
+                    players_data, str(getattr(session, "theme", "") or "haunted_house")
+                )
             
             # Generate elimination narratives for eliminated players
             elimination_results = []
@@ -437,11 +655,12 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
                 try:
                     death_narrative = await ai_service.generate_death_narrative(
                         eliminated_player, 
-                        eliminated_player.get('elimination_reason', 'Poor survival choices')
+                        eliminated_player.get('elimination_reason', 'Poor survival choices'),
+                        str(getattr(session, "theme", "") or "haunted_house"),
                     )
                     elimination_results.append(death_narrative)
                 except Exception as e:
-                    print(f"❌ Error generating elimination narrative: {e}")
+                    log_info(f"Error generating elimination narrative: {e}")
                     elimination_results.append({
                         "player_name": eliminated_player["player_name"],
                         "eliminated": True,
@@ -452,21 +671,28 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
             
             # Combine results
             all_results = elimination_results + survivor_results
-            
-            print(f"✅ Generated results for {len(all_results)} players")
+
+            # Honest telemetry: did the model actually answer, or did we fall back?
+            results_engine = "fallback"
+            if survivor_results and survivor_results[0].get("engine") == "ai":
+                results_engine = "ai"
+
+            log_info(f"Generated results for {len(all_results)} players ({results_engine})")
             return {
                 "results": all_results,
                 "survivors": len(survivor_results),
                 "eliminated": len(elimination_results),
-                "total_players": len(all_results)
+                "total_players": len(all_results),
+                "theme": session.theme,
+                "engine": results_engine,
             }
             
     except asyncio.TimeoutError:
-        print("⏰ Results generation timed out, using fallback results")
+        log_info("Results generation timed out, using fallback results")
         fallback_results = ai_service._fallback_results(players_data + eliminated_players_data)
         return {"results": fallback_results, "survivors": len(players_data), "eliminated": len(eliminated_players_data)}
         
     except Exception as e:
-        print(f"❌ Error generating results: {str(e)}")
+        log_info(f"Error generating results: {str(e)}")
         fallback_results = ai_service._fallback_results(players_data + eliminated_players_data)
         return {"results": fallback_results, "survivors": len(players_data), "eliminated": len(eliminated_players_data)}
