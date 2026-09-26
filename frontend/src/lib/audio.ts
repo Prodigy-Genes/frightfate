@@ -127,7 +127,12 @@ export class HorrorAudioEngine {
   // INTERNAL HELPERS
   // ==========================================================================
 
-  /** Two seconds of integrated (brown-ish) noise — smooth, non-hissy texture. */
+  /**
+   * Two seconds of integrated (brown-ish) noise — smooth, non-hissy texture.
+   * The tail is crossfaded into the head and the result peak-normalized, so
+   * the buffer loops with NO seam tick every 2 seconds and every bed hits a
+   * predictable level regardless of how the random walk happened to land.
+   */
   private getNoiseBuffer(): AudioBuffer | null {
     const ctx = this.ctx;
     if (!ctx) return null;
@@ -143,6 +148,29 @@ export class HorrorAudioEngine {
       last = (last + 0.02 * white) / 1.02;
       data[i] = last * 3.5;
     }
+
+    // Seamless loop: blend the last 50ms into the first 50ms so the wave
+    // arrives back at its starting value exactly when the loop restarts.
+    // (Without this, the endpoint mismatch is an audible tick every 2s.)
+    const fade = Math.min(Math.floor(ctx.sampleRate * 0.05), Math.floor(length / 4));
+    for (let i = 0; i < fade; i++) {
+      const t = i / fade;
+      const head = data[i];
+      const tailIndex = length - fade + i;
+      data[tailIndex] = data[tailIndex] * (1 - t) + head * t;
+    }
+
+    // Peak-normalize so every noise bed sits at a consistent, tuned level.
+    let peak = 0;
+    for (let i = 0; i < length; i++) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+    if (peak > 0) {
+      const norm = 0.5 / peak;
+      for (let i = 0; i < length; i++) data[i] *= norm;
+    }
+
     this.noiseBuffer = buffer;
     return buffer;
   }
@@ -334,7 +362,8 @@ export class HorrorAudioEngine {
     filter.connect(bus);
 
     // Cold wind: integrated noise through a wide band-pass, slowly swelling.
-    const wind = this.createNoiseBed("bandpass", 460, 0.6, 0.16);
+    // (Bed is peak-normalized now, so 0.16 was far hotter than intended — trim.)
+    const wind = this.createNoiseBed("bandpass", 420, 0.45, 0.06);
     if (wind) {
       const windSwell = this.slowLfo(0.05, 0.09);
       windSwell.depth.connect(wind.gain.gain);
@@ -402,7 +431,7 @@ export class HorrorAudioEngine {
     ring.start(now);
 
     // Low ventilation noise bed.
-    const vent = this.createNoiseBed("lowpass", 180, 0.7, 0.4);
+    const vent = this.createNoiseBed("lowpass", 180, 0.7, 0.16);
     if (vent) {
       vent.gain.connect(bus);
       vent.source.start(now);
@@ -586,7 +615,7 @@ export class HorrorAudioEngine {
     swell.start(now);
 
     // Water movement: filtered noise with a slow swell.
-    const water = this.createNoiseBed("lowpass", 320, 0.7, 0.22);
+    const water = this.createNoiseBed("lowpass", 300, 0.7, 0.09);
     if (water) {
       const waterSwell = this.slowLfo(0.06, 0.12);
       waterSwell.depth.connect(water.gain.gain);
@@ -830,7 +859,7 @@ export class HorrorAudioEngine {
         crashFilter.frequency.setValueAtTime(1600, now);
         const crashGain = ctx.createGain();
         crashGain.gain.setValueAtTime(0.0001, now);
-        crashGain.gain.linearRampToValueAtTime(0.16, now + 0.03);
+        crashGain.gain.linearRampToValueAtTime(0.09, now + 0.03);
         crashGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
         crash.connect(crashFilter);
         crashFilter.connect(crashGain);
@@ -897,7 +926,7 @@ export class HorrorAudioEngine {
     addTone("triangle", 49.7, 0.18); // beating partner
 
     // Wind through the trees: slow band-passed noise swells.
-    const wind = this.createNoiseBed("bandpass", 380, 0.5, 0.2);
+    const wind = this.createNoiseBed("bandpass", 340, 0.4, 0.07);
     if (wind) {
       const windSwell = this.slowLfo(0.045, 0.12);
       windSwell.depth.connect(wind.gain.gain);
