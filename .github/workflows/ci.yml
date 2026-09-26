@@ -21,9 +21,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install fastapi uvicorn sqlalchemy pydantic pydantic-settings openai websockets python-dotenv
       - name: Test backend import
+        env:
+          # CI has no .env; config defaults to Postgres, which isn't reachable
+          # here. Point at a throwaway SQLite DB and stub an API key.
+          DATABASE_URL: sqlite:///./ci_check.db
+          OPENAI_API_KEY: ci-placeholder
         run: |
           cd backend
           python -c "import app.main; print('Backend loaded successfully')"
+        # Also verify the real requirements.txt installs cleanly (UTF-8 fixed).
+      - name: Verify requirements.txt installability
+        run: |
+          python -m venv /tmp/reqtest
+          /tmp/reqtest/bin/pip install -r backend/requirements.txt
+          echo "requirements.txt installs cleanly"
 
   frontend-build:
     name: Frontend Bun Build
