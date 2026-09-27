@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.game import GameSession, Player, Scenario, PlayerAnswer, LeaderboardEntry
@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional
 import random
 import string
+from app.core.limiter import limiter
 from app.services.ai_service import ai_service
 from app.services.feed import fate_feed
 from app.routes.websocket import manager as ws_manager
@@ -82,7 +83,8 @@ def purge_stale_sessions(db: Session, max_age_hours: int = SESSION_MAX_AGE_HOURS
     return purged
 
 @router.post("/create-session")
-async def create_session(payload: dict = Body(default=None), theme: str = "haunted_house", db: Session = Depends(get_db)):
+@limiter.limit("10/minute;50/hour")
+async def create_session(request: Request, payload: dict = Body(default=None), theme: str = "haunted_house", db: Session = Depends(get_db)):
     """Create a new game session with dynamic narrative support.
 
     The theme arrives in the JSON body ({"theme": "zombie_outbreak"}) from the
@@ -196,7 +198,8 @@ async def get_leaderboard(theme: Optional[str] = None, limit: int = 25, db: Sess
 
 
 @router.post("/join-session/{session_code}")
-async def join_session(session_code: str, player_name: str, db: Session = Depends(get_db)):
+@limiter.limit("20/minute;100/hour")
+async def join_session(request: Request, session_code: str, player_name: str, db: Session = Depends(get_db)):
     """Join an existing game session"""
     session = db.query(GameSession).filter(GameSession.session_code == session_code).first()
     
@@ -233,6 +236,41 @@ async def join_session(session_code: str, player_name: str, db: Session = Depend
         "player_id": player.id,
         "session_code": session.session_code,
         "player_name": player.name
+    }
+
+@router.get("/rejoin/{session_code}/{player_id}")
+async def rejoin_session(session_code: str, player_id: int, db: Session = Depends(get_db)):
+    """Recover a player's seat after a page refresh.
+
+    The frontend persists playerId + sessionCode in sessionStorage; on reload
+    it calls this instead of join-session (whose name-uniqueness check would
+    reject the player's own name). Validates the seat still exists and the
+    session is still live, and returns everything the client needs to resume.
+    """
+    session = db.query(GameSession).filter(GameSession.session_code == session_code).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    player = db.query(Player).filter(
+        Player.id == player_id,
+        Player.session_id == session.id,
+    ).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found in this session")
+
+    # Purged/abandoned sessions report as joinable-no-more rather than 500s.
+    if getattr(session, "status", None) == "completed":
+        raise HTTPException(status_code=410, detail="This session has already ended")
+
+    return {
+        "player_id": player.id,
+        "session_code": session.session_code,
+        "player_name": player.name,
+        "theme": session.theme,
+        "status": session.status,
+        "current_question": session.current_question,
+        "is_eliminated": bool(player.is_eliminated),
+        "elimination_reason": player.elimination_reason,
     }
 
 @router.get("/session/{session_code}")

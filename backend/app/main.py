@@ -1,6 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.core.limiter import limiter
 from app.database import engine, Base
+from app.services.ai_service import ai_service
 from app.routes import game, websocket
 
 import sys
@@ -21,6 +25,9 @@ settings = get_settings()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="FrightFate API", version="1.0.0")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware for frontend (dynamic from environment)
 origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
@@ -46,6 +53,15 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "FrightFate API", "version": "1.0.0"}
+
+@app.on_event("startup")
+async def warm_scenario_cache():
+    """Pre-generate one opening scenario per theme so game starts are instant.
+
+    Runs in the background; failures are logged by the warm-up itself and
+    never block startup.
+    """
+    await ai_service.warm_scenario_cache()
 
 if __name__ == "__main__":
     import uvicorn

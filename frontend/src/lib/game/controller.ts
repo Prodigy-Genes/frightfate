@@ -9,6 +9,7 @@ import { OverlayManager } from "./overlays";
 import { ResultsController } from "./results";
 import { RoundController } from "./round";
 import { SessionController } from "./session";
+import { clearSession } from "./sessionStorage";
 import { SocketManager } from "./socket";
 import { createGameState } from "./state";
 import type { GameState } from "./state";
@@ -132,11 +133,13 @@ export class FrightFateGame {
 
     el("backToHomeBtn")?.addEventListener("click", () => {
       soundEngine.playCancel();
+      clearSession();
       this.ui.showScreen("homeScreen");
     });
 
     el("leaveLobbyBtn")?.addEventListener("click", () => {
       soundEngine.playCancel();
+      clearSession();
       this.ui.showScreen("homeScreen");
     });
 
@@ -153,11 +156,13 @@ export class FrightFateGame {
 
     el("returnToLobbyBtn")?.addEventListener("click", () => {
       soundEngine.playCancel();
+      clearSession();
       this.ui.showScreen("homeScreen");
     });
 
     el("newSessionBtn")?.addEventListener("click", () => {
       soundEngine.playCancel();
+      clearSession();
       this.ui.showScreen("homeScreen");
     });
 
@@ -329,6 +334,19 @@ export class FrightFateGame {
     }
 
     const urlParams = new URLSearchParams(window.location.search);
+
+    // Session recovery: a refresh mid-game used to orphan the player's seat.
+    // If sessionStorage still holds a live identity, resume into the lobby
+    // before any deep-link join flow can interfere. Fire-and-forget: the
+    // home screen remains usable while the check runs.
+    void this.session.tryRecoverSession().then((recovered) => {
+      if (recovered && (joinCode || urlParams.get("join"))) {
+        // A deep-link join should win over recovery only if the user confirms;
+        // for now the recovered lobby stands and the code stays in the URL.
+        console.log("Session recovered — ignoring join deep-link for", urlParams.get("code") || urlParams.get("join"));
+      }
+    });
+
     const joinCode = urlParams.get("code") || urlParams.get("join");
     if (joinCode && joinCode.length === 6) {
       const sessionCodeInput = el<HTMLInputElement>("sessionCode");

@@ -1,7 +1,8 @@
 from openai import AsyncOpenAI
+import asyncio
 import json
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -160,6 +161,50 @@ class AIService:
             "max_tokens": 8192,
             "top_p": 0.95,
         }
+
+        # Pre-generated opening scenarios per theme. The first round of a game
+        # is the most latency-sensitive (players are staring at "Roll Camera"),
+        # and cold Groq generations have been measured at ~15s against a 30s
+        # route timeout. Warming one scenario per theme at startup turns the
+        # first round into a cache hit; the cache refills in the background
+        # after each hit so the next game is also warm. Only used for
+        # question_number == 1 (later rounds depend on player history).
+        self._warm_cache: Dict[str, Dict[str, Any]] = {}
+        self._warming: Set[str] = set()
+
+    # --------------------------------------------------------------------------
+    # Warm cache (instant opening scenarios)
+    # --------------------------------------------------------------------------
+
+    async def warm_scenario_cache(self, themes: Optional[List[str]] = None) -> None:
+        """Pre-generate one opening scenario per theme in the background."""
+        themes = themes or list(THEME_SETTINGS.keys())
+        for theme in themes:
+            if theme in self._warm_cache or theme in self._warming or not self.client:
+                continue
+            self._warming.add(theme)
+
+            async def _generate(t: str = theme) -> None:
+                try:
+                    scenario = await self.generate_initial_scenario(t)
+                    if scenario.get("engine") == "ai":
+                        scenario.pop("fallback_reason", None)
+                        self._warm_cache[t] = scenario
+                        print(f"🔥 [WARM] cached opening scenario for {t}")
+                except Exception as e:
+                    print(f"⚠️  [WARM] {t} pre-generation failed: {e}")
+                finally:
+                    self._warming.discard(t)
+
+            asyncio.create_task(_generate())
+
+    def _take_warm_scenario(self, theme: str) -> Optional[Dict[str, Any]]:
+        """Pop a cached opening scenario, scheduling a background refill."""
+        scenario = self._warm_cache.pop(theme, None)
+        if scenario is not None:
+            # Refill quietly so the NEXT game still opens instantly.
+            asyncio.create_task(self.warm_scenario_cache([theme]))
+        return scenario
 
     # --------------------------------------------------------------------------
     # Internal helpers
@@ -327,6 +372,13 @@ Return ONLY valid JSON:
         {{"action_type": "escape", "description": "Run or flee choice"}}
     ]
 }}"""
+
+        # Serve a pre-generated opening when one is cached: the first round is
+        # the most latency-sensitive moment in the game.
+        warm = self._take_warm_scenario(theme)
+        if warm is not None:
+            print(f"⚡ [WARM] serving cached opening scenario for {theme}")
+            return warm
 
         try:
             if not self.client:

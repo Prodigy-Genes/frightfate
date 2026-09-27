@@ -4,6 +4,7 @@ import { promptName } from "@/components/NameModal";
 import { applyTheme } from "../themes";
 import type { AnyRecord } from "../types";
 import type { FrightFateGame } from "./controller";
+import { clearSession, loadSession, saveSession } from "./sessionStorage";
 import { eliminatedPlayerItemHtml, feedEventHtml, playerItemHtml } from "./templates";
 
 /** Session lifecycle: create, join, lobby rendering and elimination checks. */
@@ -56,6 +57,13 @@ export class SessionController {
       this.game.state.sessionCode = code;
       this.game.state.playerId = response.player_id;
       this.game.state.playerName = name;
+
+      // Persist the seat so a refresh can recover it (see sessionStorage.ts).
+      saveSession({
+        sessionCode: code,
+        playerId: String(response.player_id),
+        playerName: name,
+      });
 
       this.game.socket.connect(code);
       await this.loadLobby();
@@ -174,6 +182,43 @@ export class SessionController {
       return false;
     } catch (error) {
       console.error("Error checking elimination:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Try to resume a seat after a page refresh. Validates the persisted
+   * identity against the server (the seat may have been purged) and returns
+   * true when the lobby has been restored. Never prompts — silently bails
+   * when recovery isn't possible so the home screen stays untouched.
+   */
+  async tryRecoverSession(): Promise<boolean> {
+    const stored = loadSession();
+    if (!stored) return false;
+
+    try {
+      const response = await this.game.api.rejoinSession(stored.sessionCode, stored.playerId);
+
+      this.game.state.sessionCode = response.session_code;
+      this.game.state.playerId = String(response.player_id);
+      this.game.state.playerName = response.player_name;
+
+      if (response.is_eliminated) {
+        this.game.state.isEliminated = true;
+        this.game.state.eliminationReason = response.elimination_reason || "";
+      }
+
+      this.game.socket.connect(response.session_code);
+      await this.loadLobby();
+
+      this.game.ui.showNotification(
+        ` welcome back, ${response.player_name} — your seat was kept.`,
+        "success"
+      );
+      return true;
+    } catch {
+      // Seat gone (session purged / server restarted) — forget it quietly.
+      clearSession();
       return false;
     }
   }

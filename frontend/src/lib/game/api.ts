@@ -61,6 +61,10 @@ export class ApiClient {
     return this.call(`/api/game/session/${code}`);
   }
 
+  rejoinSession(code: string, playerId: string): Promise<AnyRecord> {
+    return this.call(`/api/game/rejoin/${code}/${playerId}`);
+  }
+
   checkElimination(code: string, playerId: string): Promise<AnyRecord> {
     return this.call(`/api/game/check-elimination/${code}/${playerId}`);
   }
