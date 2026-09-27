@@ -2,6 +2,7 @@ import { soundEngine } from "../audio";
 import { el } from "../dom";
 import { narrator } from "../narrator";
 import { applyTheme } from "../themes";
+import { getThemeDirection } from "../themeDirection";
 import { classifyComplexity } from "../time";
 import type { Scenario } from "../types";
 import type { FrightFateGame } from "./controller";
@@ -64,6 +65,7 @@ export class UiManager {
     const btn = document.getElementById(buttonId) as HTMLButtonElement | null;
     if (btn) {
       btn.disabled = true;
+      btn.dataset.originalHtml = btn.innerHTML;
       btn.innerHTML = `<span class="loading-spinner"></span>${loadingText}`;
     }
   }
@@ -72,7 +74,8 @@ export class UiManager {
     const btn = document.getElementById(buttonId) as HTMLButtonElement | null;
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = originalText;
+      btn.innerHTML = btn.dataset.originalHtml || originalText;
+      delete btn.dataset.originalHtml;
     }
   }
 
@@ -84,18 +87,35 @@ export class UiManager {
     } catch {
       /* storage unavailable — theme just won't persist */
     }
-    document.querySelectorAll(".theme-option").forEach((option) => {
-      option.classList.remove("selected");
+    document.querySelectorAll<HTMLElement>(".theme-option").forEach((option) => {
+      const selected = option.dataset.theme === theme;
+      option.classList.toggle("selected", selected);
+      option.setAttribute("aria-checked", String(selected));
+      option.tabIndex = selected ? 0 : -1;
     });
-    // Scope to the selector card — `<html data-theme>` also carries this attribute.
-    const opt = document.querySelector(`.theme-option[data-theme="${theme}"]`);
-    if (opt) opt.classList.add("selected");
 
     // Restyle the entire app to this world's palette, fonts and backdrop.
     applyTheme(theme);
+    window.dispatchEvent(new Event("frightfate-theme-change"));
+    this.applyThemeDirection(theme);
 
-    soundEngine.playSelect();
     soundEngine.playThemeAmbience(theme);
+    soundEngine.playSelect();
+  }
+
+  applyThemeDirection(theme: string): void {
+    // Screen copy and illustration props are React-owned and update through
+    // useSessionTheme when the theme-change event fires. Avoid imperative text
+    // mutations here: React cannot reconcile children replaced with textContent.
+    document.querySelectorAll<HTMLElement>(".world-scene-frame").forEach((scene) => {
+      scene.classList.toggle("world-scene-frame-selected", scene.dataset.themeScene === theme);
+    });
+    document.querySelectorAll<HTMLElement>(".theme-option").forEach((option) => {
+      const selected = option.dataset.theme === theme;
+      option.classList.toggle("selected", selected);
+      option.setAttribute("aria-checked", String(selected));
+      option.tabIndex = selected ? 0 : -1;
+    });
   }
 
   showComplexityInfo(scenario: Scenario, timeLimit: number): void {

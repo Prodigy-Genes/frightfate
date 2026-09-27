@@ -37,7 +37,7 @@ export const viewport: Viewport = {
 
 /** Per-theme display/body typefaces (loaded at runtime; graceful fallbacks). */
 const FONT_HREF =
-  "https://fonts.googleapis.com/css2?family=Creepster&family=Special+Elite&family=Metal+Mania&family=Orbitron:wght@400;700&family=Cinzel+Decorative:wght@700&family=IM+Fell+English:ital@0;1&display=swap";
+  "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Creepster&family=Special+Elite&family=Metal+Mania&family=Orbitron:wght@400;700&family=Cinzel+Decorative:wght@700&family=IM+Fell+English:ital@0;1&display=swap";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

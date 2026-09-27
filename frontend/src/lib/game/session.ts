@@ -76,6 +76,8 @@ export class SessionController {
       if (session.theme && session.theme !== this.game.state.currentTheme) {
         this.game.state.currentTheme = session.theme;
         applyTheme(session.theme);
+        window.dispatchEvent(new Event("frightfate-theme-change"));
+        this.game.ui.applyThemeDirection(session.theme);
         soundEngine.playThemeAmbience(session.theme);
       }
 

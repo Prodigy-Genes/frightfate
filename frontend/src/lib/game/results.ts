@@ -16,6 +16,7 @@ export class ResultsController {
 
   async showEliminationScreen(deathNarrative: AnyRecord | null = null): Promise<void> {
     this.game.timer.clear();
+    soundEngine.playThemeAmbience(this.game.state.currentTheme || "haunted_house");
     soundEngine.stopAmbience();
     soundEngine.playStinger();
 
@@ -74,6 +75,7 @@ export class ResultsController {
       });
 
       this.game.ui.showScreen("resultsScreen");
+      soundEngine.playVictory();
       this.game.ui.showNotification("Final results revealed!", "success");
     } catch (error) {
       console.error("Failed to load results:", error);
@@ -97,5 +99,6 @@ export class ResultsController {
     }
 
     this.game.ui.showScreen("resultsScreen");
+    soundEngine.playVictory();
   }
 }

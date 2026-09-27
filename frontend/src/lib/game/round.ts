@@ -3,6 +3,7 @@ import { el, inputValue } from "../dom";
 import { narrator } from "../narrator";
 import { calculateAdaptiveTimeLimit } from "../time";
 import type { AnyRecord, Scenario } from "../types";
+import { getThemeDirection } from "../themeDirection";
 import { validateAnswer } from "../validation";
 import type { FrightFateGame } from "./controller";
 
@@ -39,6 +40,11 @@ export class RoundController {
   }
 
   async runStartGame(): Promise<void> {
+    // The backend echoes "game_started" back to the host's own socket, so the
+    // click handler and the WS handler can both call this concurrently.
+    // Re-entry would fetch/display the scenario twice, so bail on the echo.
+    if (this.game.state.isStartingGame) return;
+    this.game.state.isStartingGame = true;
     try {
       if (await this.game.session.checkPlayerElimination()) {
         await this.game.results.showEliminationScreen();
@@ -58,6 +64,8 @@ export class RoundController {
     } catch (error: any) {
       this.game.ui.hideLoadingButton("startGameBtn", "Start Game");
       this.game.ui.showNotification(`Failed to start game: ${error.message}`, "error");
+    } finally {
+      this.game.state.isStartingGame = false;
     }
   }
 
@@ -74,8 +82,10 @@ export class RoundController {
       this.game.state.currentScenario = scenario;
 
       soundEngine.playThemeAmbience(this.game.state.currentTheme || "haunted_house");
-      const scenarioNumberEl = el("scenarioNumber");
-      if (scenarioNumberEl) scenarioNumberEl.textContent = String(this.game.state.currentQuestion);
+      const scenarioNumberEl = el("scenarioCount");
+      if (scenarioNumberEl) {
+        scenarioNumberEl.textContent = String(this.game.state.currentQuestion).padStart(2, "0");
+      }
 
       const titleEl = el("scenarioTitle");
       if (titleEl) titleEl.textContent = scenario.title || `Trial ${this.game.state.currentQuestion}`;
@@ -168,7 +178,10 @@ export class RoundController {
 
     this.game.timer.clear();
     this.game.ui.showLoadingButton("submitAnswerBtn", "Analyzing...");
-    this.game.overlays.showInteractiveLoading("AI analyzing your survival choices...", answer);
+    this.game.overlays.showInteractiveLoading(
+      getThemeDirection(this.game.state.currentTheme).analysisTitle,
+      answer
+    );
 
     try {
       const response = await this.game.api.submitAnswer({

@@ -23,6 +23,8 @@ export interface GameState {
   currentTimeLimit: number;
   /** Highest Fate Feed seq rendered — dedupes socket vs REST replay. */
   lastFeedSeq: number;
+  /** Guards against the socket echo of "game_started" re-launching the round. */
+  isStartingGame: boolean;
 }
 
 export function createGameState(): GameState {
@@ -44,5 +46,6 @@ export function createGameState(): GameState {
     currentScenario: null,
     currentTimeLimit: QUESTION_TIME_LIMIT,
     lastFeedSeq: 0,
+    isStartingGame: false,
   };
 }

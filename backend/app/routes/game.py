@@ -352,13 +352,15 @@ async def get_dynamic_scenario(session_code: str, question_number: int, player_i
                 raise Exception("Failed to generate scenario")
                 
     except asyncio.TimeoutError:
-        print("⏰ Scenario generation timed out, using fallback")
+        reason = "scenario generation exceeded the 30s time limit"
+        log_info(f"⏰ [FALLBACK] dynamic scenario: {reason}")
         theme_value = str(getattr(session, "theme", "")) if 'session' in locals() and session else "haunted_house"
-        return ai_service._get_fallback_initial_scenario(theme_value)
+        return ai_service._get_fallback_initial_scenario(theme_value, reason)
     except Exception as e:
-        print(f"❌ Error generating dynamic scenario: {e}")
+        reason = str(e)
+        log_info(f"❌ [FALLBACK] dynamic scenario: {reason}")
         theme_value = str(getattr(session, "theme", "")) if 'session' in locals() and session else "haunted_house"
-        return ai_service._get_fallback_initial_scenario(theme_value)
+        return ai_service._get_fallback_initial_scenario(theme_value, reason)
 
 @router.post("/submit-answer")
 async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_db)):
@@ -403,8 +405,8 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
             async with timeout(20):
                 scenario = await ai_service.generate_initial_scenario(theme_value)
         except Exception as e:
-            log_info(f"Error getting fallback scenario: {e}")
-            scenario = ai_service._get_fallback_initial_scenario(theme_value)
+            log_info(f"❌ [FALLBACK] scenario regeneration: {e}")
+            scenario = ai_service._get_fallback_initial_scenario(theme_value, str(e))
     
     # Get player's choice history for death analysis
     player_history = []
@@ -430,13 +432,14 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
             )
             log_info(f"AI analysis complete: score {analysis_result['survival_score']}, death: {analysis_result.get('instant_death', False)}")
     except Exception as e:
-        log_info(f"Error analyzing answer: {e}")
+        log_info(f"❌ [FALLBACK] answer analysis: {e}")
         # Fallback analysis
         analysis_result = ai_service._fallback_death_analysis(
             request.answer_text, 
             scenario.get("death_risk_level", "medium"), 
             len([h for h in player_history if h.get("score", 50) < 30]),
             theme_value,
+            str(e),
         )
     
     # Check for instant death
@@ -497,6 +500,7 @@ async def submit_answer(request: SubmitAnswerRequest, db: Session = Depends(get_
         "host_verdict": analysis_result.get("host_verdict", ""),
         "death_epitaph": analysis_result.get("death_epitaph"),
         "engine": "ai" if analysis_result.get("engine") == "ai" else "fallback",
+        "fallback_reason": analysis_result.get("fallback_reason") or None,
     }
     
     # If player died instantly, generate death narrative
@@ -676,6 +680,9 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
             results_engine = "fallback"
             if survivor_results and survivor_results[0].get("engine") == "ai":
                 results_engine = "ai"
+            results_reason = next(
+                (r.get("fallback_reason") for r in all_results if r.get("fallback_reason")), None
+            )
 
             log_info(f"Generated results for {len(all_results)} players ({results_engine})")
             return {
@@ -685,14 +692,17 @@ async def get_results(session_code: str, db: Session = Depends(get_db)):
                 "total_players": len(all_results),
                 "theme": session.theme,
                 "engine": results_engine,
+                "fallback_reason": results_reason if results_engine == "fallback" else None,
             }
             
     except asyncio.TimeoutError:
-        log_info("Results generation timed out, using fallback results")
-        fallback_results = ai_service._fallback_results(players_data + eliminated_players_data)
-        return {"results": fallback_results, "survivors": len(players_data), "eliminated": len(eliminated_players_data)}
+        reason = "results generation exceeded the 25s time limit"
+        log_info(f"⏰ [FALLBACK] results: {reason}")
+        fallback_results = ai_service._fallback_results(players_data + eliminated_players_data, fallback_reason=reason)
+        return {"results": fallback_results, "survivors": len(players_data), "eliminated": len(eliminated_players_data), "fallback_reason": reason}
         
     except Exception as e:
-        log_info(f"Error generating results: {str(e)}")
-        fallback_results = ai_service._fallback_results(players_data + eliminated_players_data)
-        return {"results": fallback_results, "survivors": len(players_data), "eliminated": len(eliminated_players_data)}
+        reason = str(e)
+        log_info(f"❌ [FALLBACK] results: {reason}")
+        fallback_results = ai_service._fallback_results(players_data + eliminated_players_data, fallback_reason=reason)
+        return {"results": fallback_results, "survivors": len(players_data), "eliminated": len(eliminated_players_data), "fallback_reason": reason}

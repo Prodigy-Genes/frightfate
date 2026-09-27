@@ -2,6 +2,7 @@ import { soundEngine } from "../audio";
 import { el } from "../dom";
 import { getScoreClass } from "../time";
 import type { AnyRecord, WordTag } from "../types";
+import { getThemeDirection } from "../themeDirection";
 import {
   extractKeyWords,
   getTips,
@@ -70,7 +71,8 @@ export class OverlayManager {
     const overlay = document.createElement("div");
     overlay.id = "loadingOverlay";
     overlay.className = "loading-overlay interactive";
-    overlay.innerHTML = interactiveLoadingHtml(message);
+    overlay.dataset.theme = this.game.state.currentTheme;
+    overlay.innerHTML = interactiveLoadingHtml(message, this.game.state.currentTheme, playerAnswer);
 
     document.body.appendChild(overlay);
 
@@ -86,7 +88,8 @@ export class OverlayManager {
     const overlay = document.createElement("div");
     overlay.id = "loadingOverlay";
     overlay.className = "loading-overlay results-loading";
-    overlay.innerHTML = resultsLoadingHtml();
+    overlay.dataset.theme = this.game.state.currentTheme;
+    overlay.innerHTML = resultsLoadingHtml(this.game.state.currentTheme);
 
     document.body.appendChild(overlay);
 
@@ -215,7 +218,10 @@ export class OverlayManager {
   private startSurvivalMeter(): void {
     const meterFill = el("meterFill");
     const meterText = el("meterText");
+    const direction = getThemeDirection(this.game.state.currentTheme);
     if (!meterFill || !meterText) return;
+    const label = meterFill.closest(".survival-meter")?.querySelector(".meter-label");
+    if (label) label.textContent = direction.analysisMetric;
 
     let progress = 0;
     const interval = window.setInterval(() => {
@@ -227,7 +233,7 @@ export class OverlayManager {
 
       if (progress >= 100) {
         window.clearInterval(interval);
-        meterText.textContent = "Analysis complete!";
+        meterText.textContent = getThemeDirection(this.game.state.currentTheme).analysisClosing;
       }
     }, 800);
 
@@ -239,7 +245,10 @@ export class OverlayManager {
     if (!tipElement) return;
 
     // Tips are delivered in the selected world's own voice.
-    const tips = getTips(this.game.state.currentTheme);
+    const tips = [
+      ...getTips(this.game.state.currentTheme),
+      ...getThemeDirection(this.game.state.currentTheme).analysisTips,
+    ];
 
     let currentTip = 0;
     tipElement.textContent = tips[currentTip];
@@ -285,12 +294,13 @@ export class OverlayManager {
       }
     }, 2000);
 
-    const suspenseInterval = window.setInterval(() => {
-      const suspenseElement = el("suspenseText");
-      if (suspenseElement) {
-        suspenseElement.textContent = SUSPENSE_TEXTS[currentSuspense];
-        currentSuspense = (currentSuspense + 1) % SUSPENSE_TEXTS.length;
-      }
+    const suspenseInterval = window.setInterval(() => {        const suspenseElement = el("suspenseText");
+        if (suspenseElement) {
+          const direction = getThemeDirection(this.game.state.currentTheme);
+          suspenseElement.textContent = [direction.analysisClosing, direction.analysisTitle, direction.lostEyebrow, direction.survivedEyebrow][currentSuspense % 4];
+          currentSuspense++;
+        }
+
     }, 3000);
 
     (window as any).calcInterval = calcInterval;

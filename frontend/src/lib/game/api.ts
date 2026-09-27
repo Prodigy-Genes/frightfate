@@ -1,6 +1,23 @@
 import { aiStatus } from "../aiStatus";
 import type { AnyRecord, Scenario, WorldState } from "../types";
 
+/**
+ * Surface a scripted-fallback response to the player instead of silently
+ * downgrading to canned content. The backend attaches `fallback_reason` to
+ * any payload answered by the offline writer; without this the failure is
+ * invisible (a stale-config outage once hid behind it completely).
+ */
+function reportFallback(payload: AnyRecord | null | undefined, context: string): void {
+  if (!payload || payload.engine !== "fallback") return;
+  const reason = typeof payload.fallback_reason === "string" ? payload.fallback_reason : "";
+  console.warn(`⚠️ [Fate Engine] ${context} served by the scripted fallback${reason ? `: ${reason}` : ""}`);
+  window.dispatchEvent(
+    new CustomEvent("frightfate-fallback", {
+      detail: { context, reason },
+    })
+  );
+}
+
 /** Thin wrapper around the FrightFate backend REST endpoints. */
 export class ApiClient {
   constructor(private baseUrl: string) {}
@@ -66,6 +83,7 @@ export class ApiClient {
         `/api/game/scenario/${code}/${questionNumber}?${params.toString()}`
       );
       aiStatus.finish(scenario?.engine);
+      reportFallback(scenario, "Scenario");
       return scenario;
     } catch (error) {
       aiStatus.finish(null);
@@ -81,6 +99,7 @@ export class ApiClient {
         body: JSON.stringify(payload),
       });
       aiStatus.finish(response?.engine);
+      reportFallback(response, "Answer verdict");
       return response;
     } catch (error) {
       aiStatus.finish(null);
@@ -93,6 +112,7 @@ export class ApiClient {
     try {
       const response = await this.call<AnyRecord>(`/api/game/results/${code}`);
       aiStatus.finish(response?.engine);
+      reportFallback(response, "Final verdicts");
       return response;
     } catch (error) {
       aiStatus.finish(null);

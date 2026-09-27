@@ -2,6 +2,7 @@ import { soundEngine } from "../audio";
 import { el } from "../dom";
 import { narrator } from "../narrator";
 import { applyTheme, THEMES } from "../themes";
+import { getThemeDirection } from "../themeDirection";
 import { ApiClient } from "./api";
 import { LeaderboardController } from "./leaderboard";
 import { OverlayManager } from "./overlays";
@@ -63,6 +64,18 @@ export class FrightFateGame {
   }
 
   mount(): void {
+    // Scripted-fallback transparency: whenever the backend answers with canned
+    // content instead of the model, tell the player why instead of silently
+    // downgrading (a stale-config outage once hid behind this exact silence).
+    window.addEventListener("frightfate-fallback", (event) => {
+      const { context, reason } = (event as CustomEvent<{ context: string; reason?: string }>).detail;
+      const detail = reason ? ` — ${reason}` : "";
+      this.ui.showNotification(
+        `⚠️ ${context} served by the scripted fallback${detail}. The Fate Engine could not be reached; check the backend log.`,
+        "warning"
+      );
+    });
+
     // First user interaction unblocks WebAudio on modern browsers
     const unlockAudio = () => {
       soundEngine.init();
@@ -74,6 +87,8 @@ export class FrightFateGame {
     };
     document.addEventListener("click", unlockAudio);
     document.addEventListener("keydown", unlockAudio);
+
+    this.ui.applyThemeDirection(this.state.currentTheme);
 
     el("createGameBtn")?.addEventListener("click", () => {
       soundEngine.playConfirm();
@@ -157,9 +172,34 @@ export class FrightFateGame {
       }
     );
 
-    document.querySelectorAll(".theme-option").forEach((option) => {
+    const themeOptions = Array.from(document.querySelectorAll<HTMLElement>(".theme-option"));
+    themeOptions.forEach((option, index) => {
       option.addEventListener("click", () => {
-        this.ui.selectTheme((option as HTMLElement).dataset.theme as string);
+        this.ui.selectTheme(option.dataset.theme as string);
+      });
+      option.addEventListener("keydown", (event: KeyboardEvent) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          this.ui.selectTheme(option.dataset.theme as string);
+          return;
+        }
+        const direction = ["ArrowRight", "ArrowDown"].includes(event.key)
+          ? 1
+          : ["ArrowLeft", "ArrowUp"].includes(event.key)
+            ? -1
+            : 0;
+        const targetIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? themeOptions.length - 1
+            : Math.max(0, Math.min(themeOptions.length - 1, index + direction));
+        if (!direction && event.key !== "Home" && event.key !== "End") return;
+        event.preventDefault();
+        const target = themeOptions[targetIndex];
+        if (target) {
+          this.ui.selectTheme(target.dataset.theme as string);
+          target.focus();
+        }
       });
     });
 
@@ -315,11 +355,13 @@ export class FrightFateGame {
       // Apply silently (no UI sound — the player hasn't interacted yet).
       this.state.currentTheme = initialTheme;
       applyTheme(initialTheme);
-      document.querySelectorAll(".theme-option").forEach((option) => {
-        option.classList.toggle(
-          "selected",
-          (option as HTMLElement).dataset.theme === initialTheme
-        );
+      this.ui.applyThemeDirection(initialTheme);
+      window.dispatchEvent(new Event("frightfate-theme-change"));
+      document.querySelectorAll<HTMLElement>(".theme-option").forEach((option) => {
+        const selected = option.dataset.theme === initialTheme;
+        option.classList.toggle("selected", selected);
+        option.setAttribute("aria-checked", String(selected));
+        option.tabIndex = selected ? 0 : -1;
       });
     }
   }
@@ -343,12 +385,13 @@ export class FrightFateGame {
   }
 
   private updateAudioButton(btn: HTMLElement, isMuted: boolean): void {
-    btn.textContent = isMuted ? "🔇" : "🔊";
+    btn.textContent = isMuted ? "×))" : "◖))";
     btn.title = isMuted ? "Audio OFF — click to turn on (M)" : "Audio ON — click to mute (M)";
+    btn.setAttribute("aria-label", isMuted ? "Turn sound on" : "Mute sound");
   }
 
   private updateNarrateButton(btn: HTMLElement, on: boolean): void {
-    btn.textContent = on ? "🎙️ Narrating" : "🔈 Narrate";
+    btn.textContent = on ? "◖)) Live" : "◖)) Narrate";
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on

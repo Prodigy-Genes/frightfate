@@ -1,46 +1,38 @@
-import { ScreenHead } from "@/components/ScreenHead";
+"use client";
 
-/** Waiting room: session code, active + eliminated player lists. */
+import { ScreenHead } from "@/components/ScreenHead";
+import { WorldScene } from "@/components/WorldScene";
+import { useSessionTheme } from "@/lib/useSessionTheme";
+
+/** Shared room: the same players enter a different place in every nightmare. */
 export function LobbyScreen() {
+  const { direction } = useSessionTheme();
   return (
     <div id="lobbyScreen" className="screen">
-      <div className="card panel-brackets">
-        <ScreenHead icon="🩸" title="The Gathering" sub="Wait for the others… then the killing begins." />
-        <h2>Game Lobby</h2>
-
-        <div className="session-code" id="displaySessionCode" title="Click to copy invite link">
-          ABC123
+      <div className="archive-panel lobby-panel">
+        <div className="section-topline"><span>LIVE ROOM / 03</span><span><i className="live-led" /> TRANSMISSION OPEN</span></div>
+        <WorldScene placement="lobby" />
+        <ScreenHead icon="◉" title={direction.roomTitle} sub={direction.roomSub} />
+        <div className="lobby-code-wrap">
+          <div><span className="micro-label theme-room-code-label">{direction.roomCodeLabel}</span><p className="lobby-code-hint">Your room code</p></div>
+          <div className="session-code" id="displaySessionCode" title="Click to copy invite link">ABC123</div>
+          <button className="btn btn-secondary btn-sm" id="copyInviteBtn">▣ Copy Invite</button>
         </div>
-        <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <button className="btn btn-secondary btn-sm" id="copyInviteBtn">
-            📋 Copy Invite Link
-          </button>
+        <div className="lobby-roster-head"><h2 className="theme-room-roster">{direction.roomRoster}</h2><span className="micro-label">THE LIVING, FOR NOW</span></div>
+        <div className="players-list" id="activePlayersList">{/* Active players will be populated here */}</div>
+        <div id="eliminatedSection" className="eliminated-section" style={{ display: "none" }}>
+          <h3>Names already taken</h3><div className="players-list eliminated" id="eliminatedPlayersList">{/* Eliminated players */}</div>
         </div>
-
-        <h3>Active Players</h3>
-        <div className="players-list" id="activePlayersList">
-          {/* Active players will be populated here */}
-        </div>
-
-        <div id="eliminatedSection" style={{ display: "none" }}>
-          <h3 style={{ color: "#ff6b6b" }}>Eliminated Players</h3>
-          <div className="players-list eliminated" id="eliminatedPlayersList">
-            {/* Eliminated players will be populated here */}
-          </div>
-        </div>
-
-        <div id="fateFeedSection" style={{ display: "none" }}>
-          <h3 className="fate-feed-title">Fate Feed</h3>
+        <div id="fateFeedSection" className="feed-panel" style={{ display: "none" }}>
+          <div className="feed-title-row"><h3 className="fate-feed-title">The room remembers</h3><span className="micro-label">LIVE FIELD NOTES</span></div>
           <div className="fate-feed" id="fateFeedList" aria-live="polite" />
         </div>
-
-        <div className="controls">
-          <button className="btn" id="startGameBtn">
-            Start Game
-          </button>
-          <button className="btn btn-secondary" id="leaveLobbyBtn">
-            Leave Session
-          </button>
+        <div className="lobby-bottom">
+          <p className="lobby-warning"><span>✳</span> <span className="theme-room-warning">{direction.roomWarning}</span></p>
+          <div className="controls">
+            <button className="btn" id="startGameBtn"><span className="btn-glyph">▶</span> <span className="theme-room-start">{direction.roomStart}</span></button>
+            <button className="btn btn-secondary" id="leaveLobbyBtn">Leave this Frequency</button>
+          </div>
         </div>
       </div>
     </div>

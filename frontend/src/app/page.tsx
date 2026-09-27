@@ -7,6 +7,7 @@ import { AiStatusBadge } from "@/components/AiStatusBadge";
 import { AudioHud } from "@/components/AudioHud";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { GameTitle } from "@/components/GameTitle";
+import { WorldPlateDefs } from "@/components/WorldPlateDefs";
 import { HomeScreen } from "@/components/screens/HomeScreen";
 import { JoinScreen } from "@/components/screens/JoinScreen";
 import { LobbyScreen } from "@/components/screens/LobbyScreen";
@@ -28,6 +29,7 @@ export default function Page() {
       <NameModalHost />
 
       <div id="app">
+        <WorldPlateDefs />
         <BackgroundEffects />
 
         <div className="container">

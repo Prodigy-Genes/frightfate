@@ -96,6 +96,25 @@ THEME_FALLBACK_QUIPS: Dict[str, str] = {
 DEFAULT_THEME = "haunted_house"
 
 
+def _note_fallback(context: str, reason: str) -> str:
+    """Log a loud, greppable warning whenever scripted fallback content is used.
+
+    The silent fallback hid a stale-config outage completely: the game kept
+    working but every response was scripted with no trace of why. Always call
+    this before returning fallback content — the returned reason string is also
+    attached to the payload so the frontend can surface it to the player.
+    """
+    reason = (reason or "unknown error").strip()
+    safe = reason.replace("\n", " ")[:300]
+    message = f"[FALLBACK] {context}: {safe}"
+    try:
+        print(f"⚠️  {message}")
+    except UnicodeEncodeError:
+        # Windows consoles without UTF-8 cannot print the warning glyph.
+        print(message.encode("ascii", "replace").decode("ascii"))
+    return reason
+
+
 class AIService:
     def __init__(self):
         # Determine API key & base URL
@@ -311,7 +330,9 @@ Return ONLY valid JSON:
 
         try:
             if not self.client:
-                return self._get_fallback_initial_scenario(theme)
+                return self._get_fallback_initial_scenario(
+                    theme, _note_fallback("initial scenario", "AI client not configured (missing API key)")
+                )
             content = await self._call_ai(
                 "You are a master horror screenwriter and survival game designer. "
                 "CRITICAL: the HOST VOICE supplied in the prompt is the narrator of this world - "
@@ -332,8 +353,9 @@ Return ONLY valid JSON:
             raise Exception("No valid JSON found in response")
 
         except Exception as e:
-            print(f"❌ Error generating initial scenario: {e}")
-            return self._get_fallback_initial_scenario(theme)
+            return self._get_fallback_initial_scenario(
+                theme, _note_fallback("initial scenario", str(e))
+            )
 
     async def generate_next_scenario(
         self,
@@ -423,6 +445,7 @@ Return ONLY valid JSON:
 
         try:
             if not self.client:
+                _note_fallback("next scenario", "AI client not configured (missing API key)")
                 return None
             content = await self._call_ai(
                 "You are a master horror screenwriter and survival game designer running a persistent "
@@ -445,7 +468,7 @@ Return ONLY valid JSON:
             return None
 
         except Exception as e:
-            print(f"❌ Error generating next scenario: {e}")
+            _note_fallback("next scenario", str(e))
             return None
 
     # --------------------------------------------------------------------------
@@ -529,7 +552,13 @@ Return ONLY valid JSON:
 
         try:
             if not self.client:
-                return self._fallback_death_analysis(player_answer, death_risk, previous_poor_choices, theme)
+                return self._fallback_death_analysis(
+                    player_answer,
+                    death_risk,
+                    previous_poor_choices,
+                    theme,
+                    _note_fallback("answer analysis", "AI client not configured (missing API key)"),
+                )
 
             content = await self._call_ai(
                 "You are a ruthless survival analyst, horror film critic and in-character game host. "
@@ -557,8 +586,13 @@ Return ONLY valid JSON:
             raise Exception("Invalid JSON format")
 
         except Exception as e:
-            print(f"❌ Error analyzing answer: {e}")
-            return self._fallback_death_analysis(player_answer, death_risk, previous_poor_choices, theme)
+            return self._fallback_death_analysis(
+                player_answer,
+                death_risk,
+                previous_poor_choices,
+                theme,
+                _note_fallback("answer analysis", str(e)),
+            )
 
     async def generate_death_narrative(
         self, player_data: Dict, death_reason: str, theme: str = DEFAULT_THEME
@@ -596,7 +630,10 @@ Return ONLY valid JSON:
 
         try:
             if not self.client:
-                return self._fallback_death_narrative(player_data, death_reason, theme)
+                return self._fallback_death_narrative(
+                    player_data, death_reason, theme,
+                    _note_fallback("death narrative", "AI client not configured (missing API key)"),
+                )
 
             content = await self._call_ai(
                 "You are a horror novelist writing elimination narratives with a distinctive in-character "
@@ -609,11 +646,15 @@ Return ONLY valid JSON:
                 narrative.setdefault("host_verdict", self._quip(theme))
                 return narrative
 
-            return self._fallback_death_narrative(player_data, death_reason, theme)
+            return self._fallback_death_narrative(
+                player_data, death_reason, theme,
+                _note_fallback("death narrative", "model returned unparseable JSON"),
+            )
 
         except Exception as e:
-            print(f"❌ Error generating death narrative: {e}")
-            return self._fallback_death_narrative(player_data, death_reason, theme)
+            return self._fallback_death_narrative(
+                player_data, death_reason, theme, _note_fallback("death narrative", str(e))
+            )
 
     # --------------------------------------------------------------------------
     # Fallbacks (offline quality path - never leave the player with nothing)
@@ -642,6 +683,7 @@ Return ONLY valid JSON:
         death_risk: str,
         previous_poor_choices: int,
         theme: str = DEFAULT_THEME,
+        fallback_reason: str = "",
     ) -> Dict[str, Any]:
         """Fallback analysis when AI fails."""
         answer_lower = answer.lower()
@@ -679,10 +721,15 @@ Return ONLY valid JSON:
                 "Improvise a sturdy physical barrier or search for secondary concealed escape routes.",
             ],
             "engine": "fallback",
+            "fallback_reason": fallback_reason,
         }
 
     def _fallback_death_narrative(
-        self, player_data: Dict, death_reason: str, theme: str = DEFAULT_THEME
+        self,
+        player_data: Dict,
+        death_reason: str,
+        theme: str = DEFAULT_THEME,
+        fallback_reason: str = "",
     ) -> Dict[str, Any]:
         """Fallback death narrative."""
         name = player_data.get("player_name", "Unknown")
@@ -700,6 +747,8 @@ Return ONLY valid JSON:
             "death_epitaph": "They had every warning and used none of them.",
             "fate_title": "💀 ELIMINATED",
             "elimination_reason": death_reason or "Poor survival instincts",
+            "engine": "fallback",
+            "fallback_reason": fallback_reason,
         }
 
     async def generate_final_results(
@@ -743,7 +792,10 @@ Order by rank (survivor first, then deaths in order)."""
 
         try:
             if not self.client:
-                return self._fallback_results(sorted_players, theme)
+                return self._fallback_results(
+                    sorted_players, theme,
+                    _note_fallback("final results", "AI client not configured (missing API key)"),
+                )
 
             response_text = self._clean_json_response(
                 await self._call_ai(
@@ -798,10 +850,13 @@ Order by rank (survivor first, then deaths in order)."""
             raise Exception("Invalid results format")
 
         except Exception as e:
-            print(f"❌ Error generating results: {e}")
-            return self._fallback_results(sorted_players, theme)
+            return self._fallback_results(
+                sorted_players, theme, _note_fallback("final results", str(e))
+            )
 
-    def _fallback_results(self, sorted_players: List[Dict], theme: str = DEFAULT_THEME) -> List[Dict[str, Any]]:
+    def _fallback_results(
+        self, sorted_players: List[Dict], theme: str = DEFAULT_THEME, fallback_reason: str = ""
+    ) -> List[Dict[str, Any]]:
         """Generate high-quality fallback results."""
         results = []
         quip = self._quip(theme)
@@ -848,11 +903,12 @@ Order by rank (survivor first, then deaths in order)."""
                 "survival_analysis": survival_analysis,
                 "host_verdict": quip,
                 "engine": "fallback",
+                "fallback_reason": fallback_reason,
             })
 
         return results
 
-    def _get_fallback_initial_scenario(self, theme: str) -> Dict[str, Any]:
+    def _get_fallback_initial_scenario(self, theme: str, fallback_reason: str = "") -> Dict[str, Any]:
         """Fallback initial scenario - screenwriter quality, one threat, one decision."""
         scenarios = {
             "haunted_house": {
@@ -997,6 +1053,7 @@ Order by rank (survivor first, then deaths in order)."""
 
         scenario = dict(scenarios.get(theme, scenarios["haunted_house"]))
         scenario["engine"] = "fallback"
+        scenario["fallback_reason"] = fallback_reason
         return scenario
 
     # --------------------------------------------------------------------------

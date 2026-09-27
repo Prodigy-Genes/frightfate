@@ -1,5 +1,6 @@
 import { el } from "../dom";
 import { getTheme, THEMES } from "../themes";
+import { getThemeDirection } from "../themeDirection";
 import type { LeaderboardEntry } from "../types";
 import type { FrightFateGame } from "./controller";
 import { escapeHtml, leaderboardRowHtml } from "./templates";
@@ -26,7 +27,7 @@ export class LeaderboardController {
     if (!container) return;
 
     const tabs: { id: string | null; label: string; icon: string }[] = [
-      { id: null, label: "All Worlds", icon: "🩸" },
+      { id: null, label: getThemeDirection(this.game.state.currentTheme).boardFilterAll, icon: getTheme(this.game.state.currentTheme).icon },
       ...THEMES.map((theme) => ({ id: theme.id, label: theme.name, icon: theme.icon })),
     ];
 

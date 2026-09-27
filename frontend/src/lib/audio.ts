@@ -52,6 +52,8 @@ export class HorrorAudioEngine {
   private limiter: DynamicsCompressorNode | null = null;
 
   activeTheme: string | null = null;
+  /** Active world owns the tuning of transient cues as well as its ambience. */
+  private currentWorld = "haunted_house";
   ambienceGain: GainNode | null = null;
   ambienceNodes: Stoppable[] = [];
   sonarInterval: ReturnType<typeof setInterval> | null = null;
@@ -234,6 +236,9 @@ export class HorrorAudioEngine {
   // ==========================================================================
 
   playThemeAmbience(theme = "lobby"): void {
+    // Update transient cues immediately, even while the previous ambience bus
+    // is cross-fading out.
+    this.currentWorld = theme;
     if (this.activeTheme === theme && this.ambienceGain) return;
     this.init();
     if (!this.ctx) return;
@@ -740,50 +745,80 @@ export class HorrorAudioEngine {
   }
 
   playHover(): void {
-    this.playTone({ type: "sine", from: 820, to: 1120, peak: 0.02, duration: 0.04, attack: 0.004 });
+    const cues: Record<string, [OscillatorType, number, number]> = {
+      haunted_house: ["sine", 510, 790], zombie_outbreak: ["square", 340, 480],
+      slasher_movie: ["triangle", 130, 92], alien_invasion: ["sine", 980, 1390],
+      deep_sea_terror: ["sine", 220, 170], cryptid_woods: ["triangle", 392, 294],
+    };
+    const [type, from, to] = cues[this.currentWorld] || cues.haunted_house;
+    this.playTone({ type, from, to, peak: 0.018, duration: 0.06, attack: 0.004,
+      filter: { type: "lowpass", frequency: this.currentWorld === "zombie_outbreak" ? 900 : 1500 } });
   }
 
   playSelect(): void {
-    this.playTone({ type: "triangle", from: 580, to: 260, peak: 0.06, duration: 0.07 });
+    const cues: Record<string, [OscillatorType, number, number]> = {
+      haunted_house: ["sine", 410, 205], zombie_outbreak: ["square", 720, 120],
+      slasher_movie: ["triangle", 160, 82], alien_invasion: ["sine", 1260, 420],
+      deep_sea_terror: ["sine", 330, 110], cryptid_woods: ["triangle", 294, 147],
+    };
+    const [type, from, to] = cues[this.currentWorld] || cues.haunted_house;
+    this.playTone({ type, from, to, peak: 0.05, duration: 0.12,
+      filter: { type: "lowpass", frequency: this.currentWorld === "zombie_outbreak" ? 800 : 1800 } });
   }
 
   playConfirm(): void {
-    this.playTone({
-      type: "sine",
-      from: 120,
-      to: 34,
-      peak: 0.16,
-      duration: 0.36,
-      filter: { type: "lowpass", frequency: 900 },
-    });
-    this.playTone({ type: "sine", from: 440, to: 220, peak: 0.09, duration: 0.28 });
+    const cues: Record<string, { type: OscillatorType; from: number; to: number; filter?: { type: BiquadFilterType; frequency: number } }> = {
+      haunted_house: { type: "sine", from: 220, to: 110 },
+      zombie_outbreak: { type: "square", from: 180, to: 48, filter: { type: "lowpass", frequency: 500 } },
+      slasher_movie: { type: "triangle", from: 98, to: 49 }, alien_invasion: { type: "sine", from: 660, to: 990 },
+      deep_sea_terror: { type: "sine", from: 82, to: 36 }, cryptid_woods: { type: "triangle", from: 196, to: 98 },
+    };
+    const cue = cues[this.currentWorld] || cues.haunted_house;
+    this.playTone({ ...cue, peak: 0.12, duration: 0.3 });
+    const upper: Record<string, [number, number]> = {
+      haunted_house: [440, 220], zombie_outbreak: [147, 73], slasher_movie: [65, 98],
+      alien_invasion: [880, 1174], deep_sea_terror: [55, 82], cryptid_woods: [392, 294],
+    };
+    const [from, to] = upper[this.currentWorld] || upper.haunted_house;
+    this.playTone({ type: this.currentWorld === "slasher_movie" ? "triangle" : "sine", from, to, peak: 0.07, duration: 0.24 });
   }
 
   playCancel(): void {
-    this.playTone({
-      type: "sawtooth",
-      from: 280,
-      to: 78,
-      peak: 0.07,
-      duration: 0.17,
-      filter: { type: "lowpass", frequency: 380, q: 0.8 },
-    });
+    const cues: Record<string, { type: OscillatorType; from: number; to: number; filter: BiquadFilterType; cutoff: number }> = {
+      haunted_house: { type: "sine", from: 280, to: 78, filter: "lowpass", cutoff: 380 },
+      zombie_outbreak: { type: "square", from: 190, to: 42, filter: "lowpass", cutoff: 260 },
+      slasher_movie: { type: "triangle", from: 160, to: 49, filter: "lowpass", cutoff: 310 },
+      alien_invasion: { type: "sine", from: 880, to: 220, filter: "bandpass", cutoff: 700 },
+      deep_sea_terror: { type: "sine", from: 180, to: 36, filter: "lowpass", cutoff: 170 },
+      cryptid_woods: { type: "triangle", from: 392, to: 98, filter: "bandpass", cutoff: 420 },
+    };
+    const cue = cues[this.currentWorld] || cues.haunted_house;
+    this.playTone({ type: cue.type, from: cue.from, to: cue.to, peak: 0.07, duration: 0.17,
+      filter: { type: cue.filter, frequency: cue.cutoff, q: 0.8 } });
   }
 
   playTypewriter(): void {
-    const pitch = 850 + (Math.random() * 300 - 150);
-    this.playTone({ type: "triangle", from: pitch, to: pitch * 0.4, peak: 0.028, duration: 0.03, attack: 0.003 });
+    const timbres: Record<string, { type: OscillatorType; pitch: number; cutoff: number }> = {
+      haunted_house: { type: "triangle", pitch: 760, cutoff: 1600 }, zombie_outbreak: { type: "square", pitch: 440, cutoff: 720 },
+      slasher_movie: { type: "triangle", pitch: 230, cutoff: 900 }, alien_invasion: { type: "sine", pitch: 1180, cutoff: 2400 },
+      deep_sea_terror: { type: "sine", pitch: 290, cutoff: 480 }, cryptid_woods: { type: "triangle", pitch: 520, cutoff: 1100 },
+    };
+    const { type, pitch, cutoff } = timbres[this.currentWorld] || timbres.haunted_house;
+    const note = pitch * (0.88 + Math.random() * 0.24);
+    this.playTone({ type, from: note, to: note * 0.4, peak: 0.028, duration: 0.03, attack: 0.003,
+      filter: { type: "lowpass", frequency: cutoff } });
   }
 
   playTimerTick(isUrgent = false): void {
-    this.playTone({
-      type: "sine",
-      from: isUrgent ? 880 : 520,
-      to: 160,
-      peak: isUrgent ? 0.08 : 0.035,
-      duration: 0.06,
-      attack: 0.004,
-    });
+    const cues: Record<string, [OscillatorType, number, number]> = {
+      haunted_house: ["sine", 540, 170], zombie_outbreak: ["square", 420, 75],
+      slasher_movie: ["triangle", 190, 68], alien_invasion: ["sine", 1100, 350],
+      deep_sea_terror: ["sine", 260, 58], cryptid_woods: ["triangle", 294, 110],
+    };
+    const [type, from, to] = cues[this.currentWorld] || cues.haunted_house;
+    const urgency = isUrgent ? (this.currentWorld === "alien_invasion" ? 1.55 : 1.25) : 1;
+    this.playTone({ type, from: from * urgency, to, peak: isUrgent ? 0.07 : 0.026, duration: 0.065, attack: 0.004,
+      filter: { type: "lowpass", frequency: this.currentWorld === "zombie_outbreak" ? 950 : 1900 } });
   }
 
   startHeartbeat(intervalMs = 800): void {
@@ -793,12 +828,22 @@ export class HorrorAudioEngine {
 
     const beat = () => {
       if (this.isMuted || !this.ctx) return;
-      this.playThump(62, 0.14);
+      if (this.currentWorld === "alien_invasion") {
+        this.playTone({ type: "sine", from: 920, to: 460, peak: 0.04, duration: 0.12 });
+        return;
+      }
+      if (this.currentWorld === "deep_sea_terror") {
+        this.playTone({ type: "sine", from: 42, to: 22, peak: 0.11, duration: 0.3, filter: { type: "lowpass", frequency: 130 } });
+        return;
+      }
+      const pulse = this.currentWorld === "zombie_outbreak" ? [52, 0.16, 38, 0.12]
+        : this.currentWorld === "slasher_movie" ? [72, 0.12, 54, 0.1]
+        : this.currentWorld === "cryptid_woods" ? [49, 0.12, 37, 0.1]
+        : [62, 0.14, 48, 0.09];
+      this.playThump(pulse[0], pulse[1]);
       setTimeout(() => {
-        if (!this.isMuted && this.ctx) {
-          this.playThump(48, 0.09);
-        }
-      }, 150);
+        if (!this.isMuted && this.ctx) this.playThump(pulse[2], pulse[3]);
+      }, this.currentWorld === "slasher_movie" ? 90 : 150);
     };
 
     beat();
@@ -825,7 +870,13 @@ export class HorrorAudioEngine {
     try {
       const now = ctx.currentTime;
 
-      [110, 116.5, 123.5, 164.8, 233.1].forEach((freq) => {
+      const chords: Record<string, number[]> = {
+        haunted_house: [110, 116.5, 123.5, 164.8, 233.1], zombie_outbreak: [49, 73.4, 98, 110, 147],
+        slasher_movie: [55, 65.4, 77.8, 98, 130.8], alien_invasion: [55, 82.4, 123.5, 185, 277],
+        deep_sea_terror: [36.7, 55, 73.4, 110, 164.8], cryptid_woods: [49, 73.4, 98, 146.8, 196],
+      };
+      const stingerChord = chords[this.currentWorld] || chords.haunted_house;
+      stingerChord.forEach((freq) => {
         const osc = ctx.createOscillator();
         osc.type = "sawtooth";
         osc.frequency.setValueAtTime(freq, now);
@@ -878,7 +929,13 @@ export class HorrorAudioEngine {
 
     try {
       const now = ctx.currentTime;
-      [220, 277.18, 329.63, 440, 554.37, 659.25].forEach((freq, i) => {
+      const resolutions: Record<string, number[]> = {
+        haunted_house: [220, 277.18, 329.63, 440, 554.37, 659.25], zombie_outbreak: [98, 123.5, 146.8, 196, 246.9, 293.7],
+        slasher_movie: [130.8, 164.8, 196, 261.6, 329.6, 392], alien_invasion: [261.6, 329.6, 392, 523.3, 659.3, 784],
+        deep_sea_terror: [73.4, 98, 110, 146.8, 196, 220], cryptid_woods: [146.8, 196, 220, 293.7, 392, 440],
+      };
+      const resolution = resolutions[this.currentWorld] || resolutions.haunted_house;
+      resolution.forEach((freq, i) => {
         const start = now + i * 0.1;
         const osc = ctx.createOscillator();
         osc.type = "sine";

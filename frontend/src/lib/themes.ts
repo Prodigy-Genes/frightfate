@@ -153,8 +153,8 @@ export const getTheme = (id: string | undefined): Theme =>
 
 /**
  * Push a theme's design tokens onto the document root as CSS custom properties.
- * All themed styling in globals.css reads these variables, so switching a theme
- * restyles the entire app without re-rendering React.
+ * The archive materials stay constant; world-specific pigments and type voices
+ * travel through these variables, so switching a session changes the entire UI.
  */
 export function applyTheme(id: string | undefined): void {
   if (typeof document === "undefined") return;
@@ -178,4 +178,9 @@ export function applyTheme(id: string | undefined): void {
   root.style.setProperty("--font-body", p.fontBody);
   root.style.setProperty("--font-mono", p.fontMono ?? '"Courier New", monospace');
   root.style.setProperty("--theme-icon", `"${theme.icon}"`);
+  root.style.setProperty("--record-accent", p.accent);
+  root.style.setProperty("--record-accent-rgb", rgb(p.accentRgb));
+  root.style.setProperty("--record-bg", p.bg1);
+  root.classList.remove("theme-haunted-house", "theme-zombie-outbreak", "theme-slasher-movie", "theme-alien-invasion", "theme-deep-sea-terror", "theme-cryptid-woods");
+  root.classList.add(`theme-${theme.id.replaceAll("_", "-")}`);
 }
